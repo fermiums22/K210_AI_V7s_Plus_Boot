@@ -2,13 +2,20 @@
 
 #include <stdint.h>
 
-#define BOOT_VERSION              "k210-boot-0.2"
+#define BOOT_VERSION              "k210-boot-0.3"
 
 #define BOOT_LOAD_ADDR            0x80000000u
 #define APP_LOAD_ADDR             0x80100000u
 #define APP_ENTRY_ADDR            0x80100000u
 #define APP_MAX_SIZE              (4u * 1024u * 1024u)
 #define BOOT_RAM_END              0x80600000u
+
+/* Flash layout.  kflash writes this boot image at flash offset 0x00000000.
+ * The first application slot starts at 1 MiB.  Slot header lives at the first
+ * bytes of the slot and is read from SPI flash before any UART/SD/FreeRTOS.
+ */
+#define APP_SLOT0_FLASH_OFFSET    0x00100000u
+#define APP_SLOT0_MAX_SIZE        (4u * 1024u * 1024u)
 
 #define BOOT_REQ_ADDR             0x805FF000u
 #define BOOT_REQ_MAGIC            0x424F4F54u
@@ -20,6 +27,7 @@
 #define BOOT_REASON_APP_REQUEST   (1u << 0)
 #define BOOT_REASON_WDG_RESET     (1u << 1)
 #define BOOT_REASON_APP_INVALID   (1u << 2)
+#define BOOT_REASON_APP_LOAD_FAIL (1u << 3)
 
 #define BOOT_MANIFEST_PATH        "/fs/0/update/pending.json"
 #define BOOT_APP_IMAGE_PATH       "/fs/0/update/app/k210_app_80100000.bin"
