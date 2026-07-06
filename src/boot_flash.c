@@ -55,11 +55,13 @@
 #define SPI_CTRL_FRAME_QUAD  (2u << SPI3_FRF_OFF)
 #define SPI_CTRL_MODE0       (0u << SPI3_MOD_OFF)
 #define SPI_CTRL_DFS8        (7u << SPI3_DFS_OFF)
+#define SPI_CTRL_DFS16       (15u << SPI3_DFS_OFF)
 
 #define SPI3_TRANS_TYPE_1C1A    0u
 #define SPI3_ADDR_L_24BIT       6u
 #define SPI3_INST_L_8BIT        2u
 #define SPI3_QUAD_DUMMY_CYCLES  8u
+#define SPI3_QUAD_FRAME_BITS    16u
 
 static volatile spi_t *const SPI3 = (volatile spi_t *)SPI3_BASE_ADDR;
 static uint8_t spi3_clock_log_done;
@@ -191,6 +193,7 @@ static int spi3_eeprom_read(const uint8_t *cmd, uint32_t cmd_len, uint8_t *rx, u
 static int spi3_quad_read_6b(uint32_t addr, uint8_t *rx, uint32_t rx_len)
 {
     uint32_t got = 0;
+    uint32_t rx_frames = (rx_len + 1u) / 2u;
 
     if (!rx && rx_len)
         return -1;
@@ -205,9 +208,9 @@ static int spi3_quad_read_6b(uint32_t addr, uint8_t *rx, uint32_t rx_len)
         (SPI3_ADDR_L_24BIT << SPI3_ADDR_L_OFF) |
         (SPI3_INST_L_8BIT << SPI3_INST_L_OFF) |
         (SPI3_QUAD_DUMMY_CYCLES << SPI3_WAIT_CYCLES_OFF);
-    SPI3->ctrlr0 = SPI_CTRL_MODE0 | SPI_CTRL_FRAME_QUAD | SPI_CTRL_DFS8 |
+    SPI3->ctrlr0 = SPI_CTRL_MODE0 | SPI_CTRL_FRAME_QUAD | SPI_CTRL_DFS16 |
                    (SPI_TMOD_EEPROM_READ << SPI3_TMOD_OFF);
-    SPI3->ctrlr1 = rx_len - 1u;
+    SPI3->ctrlr1 = rx_frames - 1u;
     SPI3->ssienr = 1;
 
     if (spi3_wait_mask(SPI3_SR_TFNF, SPI3_SR_TFNF) != 0) {
@@ -228,7 +231,10 @@ static int spi3_quad_read_6b(uint32_t addr, uint8_t *rx, uint32_t rx_len)
         uint32_t progressed = 0;
         for (uint32_t n = 0; n < SPI3_TIMEOUT; ++n) {
             while ((SPI3->sr & SPI3_SR_RFNE) && got < rx_len) {
-                rx[got++] = (uint8_t)SPI3->dr[0];
+                uint32_t frame = SPI3->dr[0];
+                rx[got++] = (uint8_t)(frame >> 0);
+                if (got < rx_len)
+                    rx[got++] = (uint8_t)(frame >> 8);
                 progressed = 1;
             }
             if (progressed)
@@ -237,10 +243,11 @@ static int spi3_quad_read_6b(uint32_t addr, uint8_t *rx, uint32_t rx_len)
         if (!progressed) {
             uint32_t sr = SPI3->sr;
             spi3_deassert();
-            LOGF("BOOT_QUAD_READ_TIMEOUT addr=0x%08lx len=%lu got=%lu sr=0x%08lx",
+            LOGF("BOOT_QUAD_READ_TIMEOUT addr=0x%08lx len=%lu got=%lu frames=%lu sr=0x%08lx",
                  (unsigned long)addr,
                  (unsigned long)rx_len,
                  (unsigned long)got,
+                 (unsigned long)rx_frames,
                  (unsigned long)sr);
             return -4;
         }
@@ -308,10 +315,11 @@ static void spi3_log_quad_once(void)
     if (spi3_quad_log_done)
         return;
     spi3_quad_log_done = 1;
-    LOGF("BOOT_QUAD_DIRECT cmd=0x%02x addr_bits=24 dummy=%u chunk=%lu",
+    LOGF("BOOT_QUAD_DIRECT cmd=0x%02x addr_bits=24 dummy=%u chunk=%lu frame_bits=%u",
          (unsigned)SPI3_QUAD_READ_CMD,
          (unsigned)SPI3_QUAD_DUMMY_CYCLES,
-         (unsigned long)SPI3_QUAD_READ_CHUNK);
+         (unsigned long)SPI3_QUAD_READ_CHUNK,
+         (unsigned)SPI3_QUAD_FRAME_BITS);
 }
 
 uint32_t boot_flash_read_jedec_id(void)
