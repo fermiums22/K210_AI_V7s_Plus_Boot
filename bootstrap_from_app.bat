@@ -17,9 +17,8 @@ if not exist "%SRC%\CMakeLists.txt" (
 )
 
 for %%D in (cmake lib third_party lds) do (
-  if exist "%%D" rmdir /s /q "%%D"
-  echo copying %%D ...
-  robocopy "%SRC%\%%D" "%%D" /E /NFL /NDL /NJH /NJS /NP >nul
+  echo syncing %%D ...
+  robocopy "%SRC%\%%D" "%%D" /MIR /NFL /NDL /NJH /NJS /NP >nul
   if errorlevel 8 exit /b 3
 )
 
@@ -50,4 +49,4 @@ if errorlevel 1 (
 
 echo BOOT_LINKER_POSTFIX_OK heap_end=0x800E0000 no_assert=1
 echo.
-echo OK: SDK/libs and shared SD/log sources copied and thinned for boot.
+echo OK: SDK/libs and shared SD/log sources synced and thinned for boot.
