@@ -6,6 +6,7 @@
 
 extern void boot_irq_off(void);
 extern void boot_jump_to_app(uintptr_t entry);
+extern int boot_flash_load_app_image_on_safe_stack(const boot_app_header_t *hdr);
 void boot_runtime_start(uint32_t reason);
 
 #ifndef BOOT_ENABLE_SLOT_PROBE
@@ -31,7 +32,7 @@ int main(void)
         LOGF("BOOT_LOAD_APP size=%lu entry=0x%08lx",
              (unsigned long)boot_decision_app_header.image_size,
              (unsigned long)boot_decision_app_header.entry_addr);
-        load_rc = boot_flash_load_app_image(&boot_decision_app_header);
+        load_rc = boot_flash_load_app_image_on_safe_stack(&boot_decision_app_header);
         if (load_rc != 0) {
             LOGF("BOOT_LOAD_FAIL rc=%d", load_rc);
             reason |= BOOT_REASON_APP_LOAD_FAIL;
