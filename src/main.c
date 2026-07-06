@@ -1,5 +1,6 @@
 #include "boot_config.h"
 #include "boot_decision.h"
+#include "boot_flash.h"
 #include <stdint.h>
 
 extern void boot_irq_off(void);
@@ -12,10 +13,13 @@ int main(void)
 
     uint32_t reason = boot_decision_get_reason();
     if (reason == 0) {
-        const boot_app_header_t *app = (const boot_app_header_t *)APP_LOAD_ADDR;
-        boot_jump_to_app(app->entry_addr);
-        for (;;)
-            ;
+        if (boot_flash_load_app_image(&boot_decision_app_header) != 0)
+            reason |= BOOT_REASON_APP_LOAD_FAIL;
+        else {
+            boot_jump_to_app(boot_decision_app_header.entry_addr);
+            for (;;)
+                ;
+        }
     }
 
     boot_runtime_start(reason);
