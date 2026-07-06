@@ -3,11 +3,9 @@
 #include <stdint.h>
 #include <clint.h>
 #include <encoding.h>
-#include <sysctl.h>
 
 #include "boot_config.h"
 #include "boot_decision.h"
-#include "boot_update.h"
 #include "log.h"
 
 static uint32_t g_boot_reason;
@@ -21,26 +19,11 @@ static void boot_prepare_freertos_runtime(void)
     set_csr(mstatus, MSTATUS_MIE);
 }
 
-static void boot_reboot_after_update(void)
-{
-    LOG("BOOT_REBOOT_AFTER_UPDATE");
-    vTaskDelay(pdMS_TO_TICKS(200));
-    sysctl->soft_reset.soft_reset = 1;
-    for (;;)
-        __asm__ volatile("wfi");
-}
-
 static void boot_task(void *arg)
 {
     (void)arg;
     uint32_t n = 0;
     LOG("BOOT_TASK_START");
-
-    int update_rc = boot_update_try_sd_app_slot0();
-    LOGF("BOOT_SD_UPDATE_RC %d", update_rc);
-    if (update_rc > 0)
-        boot_reboot_after_update();
-
     for (;;) {
         LOGF("BOOT_ALIVE %lu reason=0x%08lx", (unsigned long)n++, (unsigned long)g_boot_reason);
         vTaskDelay(pdMS_TO_TICKS(1000));
