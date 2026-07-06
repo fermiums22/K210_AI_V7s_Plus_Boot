@@ -13,12 +13,6 @@ void boot_runtime_start(uint32_t reason);
 #define BOOT_ENABLE_SLOT_PROBE 1
 #endif
 
-static void boot_early_delay(void)
-{
-    for (volatile uint32_t i = 0; i < 8000000u; ++i)
-        __asm__ volatile("nop");
-}
-
 int main(void)
 {
     boot_irq_off();
@@ -26,13 +20,6 @@ int main(void)
     log_init();
     LOG("BOOT_PRE_DECISION");
     LOGF("BOOT_CFG slot_probe=%u", (unsigned)BOOT_ENABLE_SLOT_PROBE);
-
-    /* Give the PC monitor time to attach after kflash reset and prove that the
-     * normal slot-probe image started before touching SPI/app code. */
-    LOG("BOOT_EARLY_ALIVE 0");
-    boot_early_delay();
-    LOG("BOOT_EARLY_ALIVE 1");
-    boot_early_delay();
 
 #if BOOT_ENABLE_SLOT_PROBE
     uint32_t reason = boot_decision_get_reason();
