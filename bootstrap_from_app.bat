@@ -30,5 +30,11 @@ copy /Y "%SRC%\src\pinout.h" "src\pinout.h" >nul
 copy /Y "%SRC%\src\log.c" "src\log.c" >nul
 copy /Y "%SRC%\src\log.h" "src\log.h" >nul
 
+py -3 tools\write_thin_cmake.py
+if errorlevel 1 (
+  echo ERROR: thin boot CMake patch failed
+  exit /b 4
+)
+
 echo.
-echo OK: SDK/libs and shared SD/log sources copied from app repo.
+echo OK: SDK/libs and shared SD/log sources copied and thinned for boot.
