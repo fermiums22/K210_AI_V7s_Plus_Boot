@@ -9,17 +9,13 @@ extern void boot_jump_to_app(uintptr_t entry);
 void boot_runtime_start(uint32_t reason);
 
 #ifndef BOOT_ENABLE_SLOT_PROBE
-#define BOOT_ENABLE_SLOT_PROBE 0
+#define BOOT_ENABLE_SLOT_PROBE 1
 #endif
 
 int main(void)
 {
     boot_irq_off();
 
-    /* Keep the bootloader recoverable while the SPI3 flash slot driver is under
-     * bring-up.  With BOOT_ENABLE_SLOT_PROBE=0 the boot always enters runtime
-     * mode and never hangs before the console is available.  Enable the define
-     * only for targeted slot-load debugging. */
     log_init();
     LOG("BOOT_PRE_DECISION");
 
