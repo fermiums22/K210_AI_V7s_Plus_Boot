@@ -31,8 +31,9 @@ call flash_boot.bat %PORT% --no-monitor --baud 1500000 || exit /b 3
 set "BOOT_SLOT_PROBE="
 
 echo.
-echo [4/7] Recovery monitor: expected BOOT_SLOT_PROBE_DISABLED and BOOT_ALIVE
-call monitor_boot.bat %PORT% 115200 8
+echo [4/7] Recovery monitor auto-closes in 3s. Do NOT press Ctrl+C.
+echo Expected: BOOT_SLOT_PROBE_DISABLED and BOOT_ALIVE.
+call monitor_boot.bat %PORT% 115200 3
 
 echo.
 echo [5/7] Update app repo and clean-build slot0
