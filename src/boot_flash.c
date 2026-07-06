@@ -55,6 +55,7 @@
 #define SPI_CTRL_FRAME_QUAD  (2u << SPI3_FRF_OFF)
 #define SPI_CTRL_MODE0       (0u << SPI3_MOD_OFF)
 #define SPI_CTRL_DFS8        (7u << SPI3_DFS_OFF)
+#define SPI_CTRL_DFS32       (31u << SPI3_DFS_OFF)
 
 #define SPI3_TRANS_TYPE_1C1A    0u
 #define SPI3_ADDR_L_24BIT       6u
@@ -68,6 +69,7 @@
 #define BOOT_DMAC_CH_WE            (1ull << (BOOT_DMAC_CH + 8u))
 
 #define BOOT_DMAC_WIDTH_8          0u
+#define BOOT_DMAC_WIDTH_32         2u
 #define BOOT_DMAC_INC              0u
 #define BOOT_DMAC_NOCHANGE         1u
 #define BOOT_DMAC_MSIZE_16         3u
@@ -97,6 +99,8 @@
 #define BOOT_DMAC_INT_ERR_MASK     0x1fe0ull
 
 #define SPI3_DMA_SELECT_RX         SYSCTL_DMA_SELECT_SSI3_RX_REQ
+#define SPI3_ENDIAN_NORMAL         0u
+#define SPI3_ENDIAN_REVERSED       1u
 
 static volatile spi_t *const SPI3 = (volatile spi_t *)SPI3_BASE_ADDR;
 static volatile dmac_t *const BOOT_DMAC = (volatile dmac_t *)DMAC_BASE_ADDR;
@@ -159,7 +163,7 @@ static void spi3_dma_init_once(void)
     spi3_dma_init_done = 1;
 }
 
-static void spi3_dma_start_rx(uint8_t *dst, uint32_t len)
+static void spi3_dma_start_rx_words(uint32_t *dst, uint32_t words)
 {
     spi3_dma_disable_channel();
     spi3_dma_clear_ints();
@@ -175,19 +179,18 @@ static void spi3_dma_start_rx(uint8_t *dst, uint32_t len)
     BOOT_DMAC->channel[BOOT_DMAC_CH].sar = (uint64_t)(uintptr_t)&SPI3->dr[0];
     BOOT_DMAC->channel[BOOT_DMAC_CH].dar = (uint64_t)(uintptr_t)dst;
     BOOT_DMAC->channel[BOOT_DMAC_CH].llp = 0;
-    BOOT_DMAC->channel[BOOT_DMAC_CH].block_ts = (uint64_t)len - 1ull;
+    BOOT_DMAC->channel[BOOT_DMAC_CH].block_ts = (uint64_t)words - 1ull;
     BOOT_DMAC->channel[BOOT_DMAC_CH].ctl =
         BOOT_DMAC_CTL_SMS(0) |
         BOOT_DMAC_CTL_DMS(1) |
         BOOT_DMAC_CTL_SINC(BOOT_DMAC_NOCHANGE) |
         BOOT_DMAC_CTL_DINC(BOOT_DMAC_INC) |
-        BOOT_DMAC_CTL_SRC_WIDTH(BOOT_DMAC_WIDTH_8) |
-        BOOT_DMAC_CTL_DST_WIDTH(BOOT_DMAC_WIDTH_8) |
+        BOOT_DMAC_CTL_SRC_WIDTH(BOOT_DMAC_WIDTH_32) |
+        BOOT_DMAC_CTL_DST_WIDTH(BOOT_DMAC_WIDTH_32) |
         BOOT_DMAC_CTL_SRC_MSIZE(BOOT_DMAC_MSIZE_16) |
         BOOT_DMAC_CTL_DST_MSIZE(BOOT_DMAC_MSIZE_16) |
         BOOT_DMAC_CTL_IOC_BLK;
 
-    (void)BOOT_DMAC->channel[BOOT_DMAC_CH].swhssrc;
     spi3_dma_enable_channel();
 }
 
@@ -228,6 +231,7 @@ static void boot_flash_spi3_init(void)
     SPI3->dmatdlr = 0x10;
     SPI3->dmardlr = 0;
     SPI3->rx_sample_delay = 0;
+    SPI3->endian = SPI3_ENDIAN_NORMAL;
     SPI3->spi_ctrlr0 = 0;
     SPI3->ctrlr0 = SPI_CTRL_MODE0 | SPI_CTRL_FRAME_STD | SPI_CTRL_DFS8;
     (void)SPI3->icr;
@@ -253,6 +257,7 @@ static int spi3_set_tmod(uint32_t tmod)
     SPI3->ssienr = 0;
     SPI3->spi_ctrlr0 = 0;
     SPI3->dmacr = 0;
+    SPI3->endian = SPI3_ENDIAN_NORMAL;
     SPI3->ctrlr0 = SPI_CTRL_MODE0 | SPI_CTRL_FRAME_STD | SPI_CTRL_DFS8 | (tmod << SPI3_TMOD_OFF);
     return 0;
 }
@@ -313,24 +318,30 @@ static int spi3_eeprom_read(const uint8_t *cmd, uint32_t cmd_len, uint8_t *rx, u
 static int spi3_quad_read_dma_6b(uint32_t addr, uint8_t *rx, uint32_t rx_len)
 {
     int dma_rc;
+    uint32_t words;
 
     if (!rx && rx_len)
         return -1;
     if (rx_len == 0)
         return 0;
+    if (((uintptr_t)rx & 3u) != 0 || (rx_len & 3u) != 0)
+        return -5;
+
+    words = rx_len / 4u;
 
     (void)spi3_wait_mask(SPI3_SR_BUSY, 0);
     SPI3->ssienr = 0;
     SPI3->ser = 0;
     SPI3->dmacr = 0;
+    SPI3->endian = SPI3_ENDIAN_REVERSED;
     SPI3->spi_ctrlr0 =
         (SPI3_TRANS_TYPE_1C1A << SPI3_TRANS_TYPE_OFF) |
         (SPI3_ADDR_L_24BIT << SPI3_ADDR_L_OFF) |
         (SPI3_INST_L_8BIT << SPI3_INST_L_OFF) |
         (SPI3_QUAD_DUMMY_CYCLES << SPI3_WAIT_CYCLES_OFF);
-    SPI3->ctrlr0 = SPI_CTRL_MODE0 | SPI_CTRL_FRAME_QUAD | SPI_CTRL_DFS8 |
+    SPI3->ctrlr0 = SPI_CTRL_MODE0 | SPI_CTRL_FRAME_QUAD | SPI_CTRL_DFS32 |
                    (SPI_TMOD_EEPROM_READ << SPI3_TMOD_OFF);
-    SPI3->ctrlr1 = rx_len - 1u;
+    SPI3->ctrlr1 = words - 1u;
     SPI3->dmardlr = 0;
     SPI3->dmacr = 0x1; /* RX DMA enable. */
     SPI3->ssienr = 1;
@@ -347,7 +358,7 @@ static int spi3_quad_read_dma_6b(uint32_t addr, uint8_t *rx, uint32_t rx_len)
     }
     SPI3->dr[0] = addr & 0x00ffffffu;
 
-    spi3_dma_start_rx(rx, rx_len);
+    spi3_dma_start_rx_words((uint32_t *)rx, words);
     SPI3->ser = SPI3_CS_MASK;
 
     dma_rc = spi3_dma_wait_done();
@@ -366,10 +377,11 @@ static int spi3_quad_read_dma_6b(uint32_t addr, uint8_t *rx, uint32_t rx_len)
         uint64_t ch_cfg = BOOT_DMAC->channel[BOOT_DMAC_CH].cfg;
         uint64_t chen = BOOT_DMAC->chen;
         spi3_deassert();
-        LOGF("BOOT_QUAD_DMA_FAIL rc=%d addr=0x%08lx len=%lu sr=0x%08lx rxflr=%lu chint=0x%lx chstat=0x%lx block=0x%lx ctl=0x%lx cfg=0x%lx chen=0x%lx",
+        LOGF("BOOT_QUAD_DMA_FAIL rc=%d addr=0x%08lx len=%lu words=%lu sr=0x%08lx rxflr=%lu chint=0x%lx chstat=0x%lx block=0x%lx ctl=0x%lx cfg=0x%lx chen=0x%lx",
              dma_rc,
              (unsigned long)addr,
              (unsigned long)rx_len,
+             (unsigned long)words,
              (unsigned long)sr,
              (unsigned long)rxflr,
              (unsigned long)ch_intstatus,
@@ -440,7 +452,7 @@ static void spi3_log_quad_once(void)
     if (spi3_quad_log_done)
         return;
     spi3_quad_log_done = 1;
-    LOGF("BOOT_QUAD_DIRECT cmd=0x%02x addr_bits=24 dummy=%u chunk=%lu dma=k210-direct msize=16 sck=65MHz",
+    LOGF("BOOT_QUAD_DIRECT cmd=0x%02x addr_bits=24 dummy=%u chunk=%lu dma=k210-direct frame_bits=32 endian=1 sck=65MHz",
          (unsigned)SPI3_QUAD_READ_CMD,
          (unsigned)SPI3_QUAD_DUMMY_CYCLES,
          (unsigned long)SPI3_QUAD_READ_CHUNK);
@@ -539,7 +551,7 @@ int boot_flash_load_app_image(const boot_app_header_t *hdr)
         ms = 1;
     kib_s = (((uint64_t)hdr->image_size / 1024ull) * 1000ull) / ms;
 
-    LOGF("BOOT_LOAD_DONE mode=quad-dma bytes=%lu ms=%lu KiB/s=%lu",
+    LOGF("BOOT_LOAD_DONE mode=quad-dma32 bytes=%lu ms=%lu KiB/s=%lu",
          (unsigned long)hdr->image_size,
          (unsigned long)ms,
          (unsigned long)kib_s);
