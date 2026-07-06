@@ -17,6 +17,18 @@
 #define SPI3_FLUSH_LIMIT    128u
 #define BOOT_CYCLE_HZ       390000000ull
 
+#define SPI3_WREN_CMD       0x06u
+#define SPI3_RDSR_CMD       0x05u
+#define SPI3_PP_CMD         0x02u
+#define SPI3_SE4K_CMD       0x20u
+#define SPI3_BE64K_CMD      0xd8u
+#define SPI3_PAGE_SIZE      256u
+#define SPI3_SECTOR_SIZE    (4u * 1024u)
+#define SPI3_BLOCK_SIZE     (64u * 1024u)
+#define SPI3_SR_WIP         0x01u
+#define SPI3_SR_WEL         0x02u
+#define SPI3_BUSY_POLLS     2000000u
+
 #define SPI3_SR_BUSY        0x01u
 #define SPI3_SR_TFNF        0x02u
 #define SPI3_SR_TFE         0x04u
@@ -103,6 +115,26 @@ static void spi3_deassert(void)
     spi3_flush_rx_bounded();
 }
 
+static int spi3_tx(const uint8_t *tx, uint32_t len)
+{
+    if (!tx || !len)
+        return -1;
+    if (spi3_set_tmod(SPI_TMOD_TX_ONLY) != 0)
+        return -2;
+
+    SPI3->ssienr = 1;
+    for (uint32_t i = 0; i < len; ++i) {
+        if (spi3_wait_mask(SPI3_SR_TFNF, SPI3_SR_TFNF) != 0) {
+            spi3_deassert();
+            return -3;
+        }
+        SPI3->dr[0] = tx[i];
+    }
+    SPI3->ser = SPI3_CS_MASK;
+    spi3_deassert();
+    return 0;
+}
+
 static int spi3_eeprom_read(const uint8_t *cmd, uint32_t cmd_len, uint8_t *rx, uint32_t rx_len)
 {
     uint32_t got = 0;
@@ -147,6 +179,56 @@ static int spi3_eeprom_read(const uint8_t *cmd, uint32_t cmd_len, uint8_t *rx, u
     return 0;
 }
 
+static int boot_flash_read_status(uint8_t *sr)
+{
+    uint8_t cmd = SPI3_RDSR_CMD;
+    return spi3_eeprom_read(&cmd, 1, sr, 1);
+}
+
+static int boot_flash_wait_ready(void)
+{
+    uint8_t sr = 0xff;
+    for (uint32_t i = 0; i < SPI3_BUSY_POLLS; ++i) {
+        int rc = boot_flash_read_status(&sr);
+        if (rc != 0)
+            return rc;
+        if ((sr & SPI3_SR_WIP) == 0)
+            return 0;
+    }
+    return -4;
+}
+
+static int boot_flash_write_enable(void)
+{
+    uint8_t cmd = SPI3_WREN_CMD;
+    uint8_t sr = 0;
+    int rc = spi3_tx(&cmd, 1);
+    if (rc != 0)
+        return rc;
+    rc = boot_flash_read_status(&sr);
+    if (rc != 0)
+        return rc;
+    return (sr & SPI3_SR_WEL) ? 0 : -5;
+}
+
+static int boot_flash_erase_one(uint32_t flash_offset, uint32_t size)
+{
+    uint8_t cmd[4];
+    int rc = boot_flash_write_enable();
+    if (rc != 0)
+        return rc;
+
+    cmd[0] = size == SPI3_BLOCK_SIZE ? SPI3_BE64K_CMD : SPI3_SE4K_CMD;
+    cmd[1] = (uint8_t)(flash_offset >> 16);
+    cmd[2] = (uint8_t)(flash_offset >> 8);
+    cmd[3] = (uint8_t)(flash_offset >> 0);
+
+    rc = spi3_tx(cmd, sizeof(cmd));
+    if (rc != 0)
+        return rc;
+    return boot_flash_wait_ready();
+}
+
 uint32_t boot_flash_read_jedec_id(void)
 {
     uint8_t cmd = SPI3_JEDEC_ID_CMD;
@@ -186,6 +268,74 @@ int boot_flash_read(uint32_t flash_offset, void *dst, uint32_t len)
         len -= chunk;
     }
 
+    return 0;
+}
+
+int boot_flash_erase_range(uint32_t flash_offset, uint32_t len)
+{
+    uint32_t end;
+    if (len == 0)
+        return 0;
+    if (flash_offset < APP_SLOT0_FLASH_OFFSET)
+        return -1;
+    if (len > APP_SLOT0_MAX_SIZE)
+        return -2;
+    end = flash_offset + len;
+    if (end > (APP_SLOT0_FLASH_OFFSET + APP_SLOT0_MAX_SIZE) || end < flash_offset)
+        return -3;
+
+    boot_flash_spi3_init();
+
+    while (flash_offset < end) {
+        uint32_t left = end - flash_offset;
+        uint32_t erase = ((flash_offset % SPI3_BLOCK_SIZE) == 0 && left >= SPI3_BLOCK_SIZE) ? SPI3_BLOCK_SIZE : SPI3_SECTOR_SIZE;
+        int rc = boot_flash_erase_one(flash_offset, erase);
+        if (rc != 0)
+            return rc;
+        flash_offset += erase;
+    }
+    return 0;
+}
+
+int boot_flash_program(uint32_t flash_offset, const void *src, uint32_t len)
+{
+    const uint8_t *in = (const uint8_t *)src;
+    uint8_t cmd[4 + SPI3_PAGE_SIZE];
+    if (!in && len)
+        return -1;
+    if (flash_offset < APP_SLOT0_FLASH_OFFSET)
+        return -2;
+    if (len > APP_SLOT0_MAX_SIZE)
+        return -3;
+    if ((flash_offset + len) > (APP_SLOT0_FLASH_OFFSET + APP_SLOT0_MAX_SIZE) || (flash_offset + len) < flash_offset)
+        return -4;
+
+    boot_flash_spi3_init();
+
+    while (len) {
+        uint32_t page_left = SPI3_PAGE_SIZE - (flash_offset % SPI3_PAGE_SIZE);
+        uint32_t chunk = len < page_left ? len : page_left;
+        int rc = boot_flash_write_enable();
+        if (rc != 0)
+            return rc;
+
+        cmd[0] = SPI3_PP_CMD;
+        cmd[1] = (uint8_t)(flash_offset >> 16);
+        cmd[2] = (uint8_t)(flash_offset >> 8);
+        cmd[3] = (uint8_t)(flash_offset >> 0);
+        memcpy(&cmd[4], in, chunk);
+
+        rc = spi3_tx(cmd, 4 + chunk);
+        if (rc != 0)
+            return rc;
+        rc = boot_flash_wait_ready();
+        if (rc != 0)
+            return rc;
+
+        flash_offset += chunk;
+        in += chunk;
+        len -= chunk;
+    }
     return 0;
 }
 
