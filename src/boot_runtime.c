@@ -6,6 +6,7 @@
 
 #include "boot_config.h"
 #include "boot_decision.h"
+#include "boot_flash.h"
 #include "log.h"
 
 static uint32_t g_boot_reason;
@@ -72,6 +73,7 @@ void boot_runtime_start(uint32_t reason)
          (unsigned)((g_boot_reason & BOOT_REASON_WDG_RESET) != 0),
          (unsigned)((g_boot_reason & BOOT_REASON_APP_INVALID) != 0),
          (unsigned)((g_boot_reason & BOOT_REASON_APP_LOAD_FAIL) != 0));
+    LOGF("[boot] flash_jedec_id=0x%06lx", (unsigned long)boot_flash_read_jedec_id());
     LOGF("[boot] app_hdr magic=0x%08lx load=0x%08lx entry=0x%08lx size=%lu",
          (unsigned long)boot_decision_app_header.magic,
          (unsigned long)boot_decision_app_header.load_addr,
