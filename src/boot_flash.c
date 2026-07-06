@@ -232,9 +232,9 @@ static int spi3_quad_read_6b(uint32_t addr, uint8_t *rx, uint32_t rx_len)
         for (uint32_t n = 0; n < SPI3_TIMEOUT; ++n) {
             while ((SPI3->sr & SPI3_SR_RFNE) && got < rx_len) {
                 uint32_t frame = SPI3->dr[0];
-                rx[got++] = (uint8_t)(frame >> 0);
+                rx[got++] = (uint8_t)(frame >> 8);
                 if (got < rx_len)
-                    rx[got++] = (uint8_t)(frame >> 8);
+                    rx[got++] = (uint8_t)(frame >> 0);
                 progressed = 1;
             }
             if (progressed)
@@ -315,7 +315,7 @@ static void spi3_log_quad_once(void)
     if (spi3_quad_log_done)
         return;
     spi3_quad_log_done = 1;
-    LOGF("BOOT_QUAD_DIRECT cmd=0x%02x addr_bits=24 dummy=%u chunk=%lu frame_bits=%u",
+    LOGF("BOOT_QUAD_DIRECT cmd=0x%02x addr_bits=24 dummy=%u chunk=%lu frame_bits=%u order=hi-lo",
          (unsigned)SPI3_QUAD_READ_CMD,
          (unsigned)SPI3_QUAD_DUMMY_CYCLES,
          (unsigned long)SPI3_QUAD_READ_CHUNK,
