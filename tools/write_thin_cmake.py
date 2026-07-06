@@ -75,7 +75,89 @@ target_link_libraries(bsp PRIVATE hal freertos)
 target_include_directories(bsp PUBLIC ${CMAKE_CURRENT_LIST_DIR}/include)
 '''
 
+REGISTRY = r'''/* Thin boot registry: only drivers linked into boot. */
+#include <kernel/driver.hpp>
+
+using namespace sys;
+
+extern driver &g_uart_driver_uart0;
+extern driver &g_uart_driver_uart1;
+extern driver &g_uart_driver_uart2;
+extern driver &g_gpio_driver_gpio0;
+extern driver &g_gpiohs_driver_gpio0;
+extern driver &g_spi_driver_spi0;
+extern driver &g_spi_driver_spi1;
+extern driver &g_spi_driver_spi3;
+extern driver &g_timer_driver_timer0;
+extern driver &g_timer_driver_timer1;
+extern driver &g_timer_driver_timer2;
+extern driver &g_timer_driver_timer3;
+extern driver &g_timer_driver_timer4;
+extern driver &g_timer_driver_timer5;
+extern driver &g_timer_driver_timer6;
+extern driver &g_timer_driver_timer7;
+extern driver &g_timer_driver_timer8;
+extern driver &g_timer_driver_timer9;
+extern driver &g_timer_driver_timer10;
+extern driver &g_timer_driver_timer11;
+extern driver &g_wdt_driver_wdt0;
+extern driver &g_wdt_driver_wdt1;
+
+/* HAL/DMA */
+extern driver &g_pic_driver_plic0;
+extern driver &g_dmac_driver_dmac0;
+extern driver &g_dma_driver_dma0;
+extern driver &g_dma_driver_dma1;
+extern driver &g_dma_driver_dma2;
+extern driver &g_dma_driver_dma3;
+extern driver &g_dma_driver_dma4;
+extern driver &g_dma_driver_dma5;
+
+driver_registry_t sys::g_system_drivers[] = {
+    { "/dev/uart1", { std::in_place, &g_uart_driver_uart0 } },
+    { "/dev/uart2", { std::in_place, &g_uart_driver_uart1 } },
+    { "/dev/uart3", { std::in_place, &g_uart_driver_uart2 } },
+    { "/dev/gpio0", { std::in_place, &g_gpiohs_driver_gpio0 } },
+    { "/dev/gpio1", { std::in_place, &g_gpio_driver_gpio0 } },
+    { "/dev/spi0", { std::in_place, &g_spi_driver_spi0 } },
+    { "/dev/spi1", { std::in_place, &g_spi_driver_spi1 } },
+    { "/dev/spi3", { std::in_place, &g_spi_driver_spi3 } },
+    { "/dev/timer0", { std::in_place, &g_timer_driver_timer0 } },
+    { "/dev/timer1", { std::in_place, &g_timer_driver_timer1 } },
+    { "/dev/timer2", { std::in_place, &g_timer_driver_timer2 } },
+    { "/dev/timer3", { std::in_place, &g_timer_driver_timer3 } },
+    { "/dev/timer4", { std::in_place, &g_timer_driver_timer4 } },
+    { "/dev/timer5", { std::in_place, &g_timer_driver_timer5 } },
+    { "/dev/timer6", { std::in_place, &g_timer_driver_timer6 } },
+    { "/dev/timer7", { std::in_place, &g_timer_driver_timer7 } },
+    { "/dev/timer8", { std::in_place, &g_timer_driver_timer8 } },
+    { "/dev/timer9", { std::in_place, &g_timer_driver_timer9 } },
+    { "/dev/timer10", { std::in_place, &g_timer_driver_timer10 } },
+    { "/dev/timer11", { std::in_place, &g_timer_driver_timer11 } },
+    { "/dev/wdt0", { std::in_place, &g_wdt_driver_wdt0 } },
+    { "/dev/wdt1", { std::in_place, &g_wdt_driver_wdt1 } },
+    {}
+};
+
+driver_registry_t sys::g_hal_drivers[] = {
+    { "/dev/pic0", { std::in_place, &g_pic_driver_plic0 } },
+    { "/dev/dmac0", { std::in_place, &g_dmac_driver_dmac0 } },
+    {}
+};
+
+driver_registry_t sys::g_dma_drivers[] = {
+    { "/dev/dmac0/0", { std::in_place, &g_dma_driver_dma0 } },
+    { "/dev/dmac0/1", { std::in_place, &g_dma_driver_dma1 } },
+    { "/dev/dmac0/2", { std::in_place, &g_dma_driver_dma2 } },
+    { "/dev/dmac0/3", { std::in_place, &g_dma_driver_dma3 } },
+    { "/dev/dmac0/4", { std::in_place, &g_dma_driver_dma4 } },
+    { "/dev/dmac0/5", { std::in_place, &g_dma_driver_dma5 } },
+    {}
+};
+'''
+
 (ROOT / "lib" / "freertos" / "CMakeLists.txt").write_text(FREERTOS, encoding="utf-8", newline="\n")
 (ROOT / "lib" / "drivers" / "CMakeLists.txt").write_text(DRIVERS, encoding="utf-8", newline="\n")
 (ROOT / "lib" / "bsp" / "CMakeLists.txt").write_text(BSP, encoding="utf-8", newline="\n")
-print("THIN_BOOT_CMAKE_OK no_lwip=1 no_esp_flasher=1 no_pwm_dvp_i2s=1 asm_language_c=1")
+(ROOT / "lib" / "bsp" / "device" / "registry.cpp").write_text(REGISTRY, encoding="utf-8", newline="\n")
+print("THIN_BOOT_CMAKE_OK no_lwip=1 no_esp_flasher=1 no_pwm_dvp_i2s=1 asm_language_c=1 thin_registry=1")
