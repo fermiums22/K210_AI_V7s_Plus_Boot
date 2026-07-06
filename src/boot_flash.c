@@ -99,6 +99,7 @@
 #define SPI3_DMA_SELECT_RX         SYSCTL_DMA_SELECT_SSI3_RX_REQ
 
 static volatile spi_t *const SPI3 = (volatile spi_t *)SPI3_BASE_ADDR;
+static volatile dmac_t *const BOOT_DMAC = (volatile dmac_t *)DMAC_BASE_ADDR;
 static uint8_t spi3_clock_log_done;
 static uint8_t spi3_flash_id_log_done;
 static uint8_t spi3_quad_log_done;
@@ -131,17 +132,17 @@ static int spi3_wait_mask(uint32_t mask, uint32_t value)
 
 static void spi3_dma_clear_ints(void)
 {
-    dmac->channel[BOOT_DMAC_CH].intclear = 0xffffffffull;
+    BOOT_DMAC->channel[BOOT_DMAC_CH].intclear = 0xffffffffull;
 }
 
 static void spi3_dma_disable_channel(void)
 {
-    dmac->chen = BOOT_DMAC_CH_WE;
+    BOOT_DMAC->chen = BOOT_DMAC_CH_WE;
 }
 
 static void spi3_dma_enable_channel(void)
 {
-    dmac->chen = BOOT_DMAC_CH_WE | BOOT_DMAC_CH_MASK;
+    BOOT_DMAC->chen = BOOT_DMAC_CH_WE | BOOT_DMAC_CH_MASK;
 }
 
 static void spi3_dma_init_once(void)
@@ -149,11 +150,11 @@ static void spi3_dma_init_once(void)
     if (spi3_dma_init_done)
         return;
     sysctl_clock_enable(SYSCTL_CLOCK_DMA);
-    dmac->cfg = 0x3ull; /* DMAC enable + interrupt/status generation enable. */
+    BOOT_DMAC->cfg = 0x3ull; /* DMAC enable + interrupt/status generation enable. */
     spi3_dma_disable_channel();
     spi3_dma_clear_ints();
-    dmac->channel[BOOT_DMAC_CH].intstatus_en = BOOT_DMAC_INT_DONE_MASK | BOOT_DMAC_INT_ERR_MASK;
-    dmac->channel[BOOT_DMAC_CH].intsignal_en = 0;
+    BOOT_DMAC->channel[BOOT_DMAC_CH].intstatus_en = BOOT_DMAC_INT_DONE_MASK | BOOT_DMAC_INT_ERR_MASK;
+    BOOT_DMAC->channel[BOOT_DMAC_CH].intsignal_en = 0;
     sysctl_dma_select((sysctl_dma_channel_t)BOOT_DMAC_CH, SPI3_DMA_SELECT_RX);
     spi3_dma_init_done = 1;
 }
@@ -163,7 +164,7 @@ static void spi3_dma_start_rx(uint8_t *dst, uint32_t len)
     spi3_dma_disable_channel();
     spi3_dma_clear_ints();
 
-    dmac->channel[BOOT_DMAC_CH].cfg =
+    BOOT_DMAC->channel[BOOT_DMAC_CH].cfg =
         BOOT_DMAC_CFG_TT_FC(BOOT_DMAC_TT_FC_P2M) |
         BOOT_DMAC_CFG_HS_SRC_HW |
         BOOT_DMAC_CFG_HS_DST_SW |
@@ -171,11 +172,11 @@ static void spi3_dma_start_rx(uint8_t *dst, uint32_t len)
         BOOT_DMAC_CFG_DST_PER(BOOT_DMAC_CH) |
         BOOT_DMAC_CFG_CH_PRI(BOOT_DMAC_PRIOR_HI);
 
-    dmac->channel[BOOT_DMAC_CH].sar = (uint64_t)(uintptr_t)&SPI3->dr[0];
-    dmac->channel[BOOT_DMAC_CH].dar = (uint64_t)(uintptr_t)dst;
-    dmac->channel[BOOT_DMAC_CH].llp = 0;
-    dmac->channel[BOOT_DMAC_CH].block_ts = (uint64_t)len - 1ull;
-    dmac->channel[BOOT_DMAC_CH].ctl =
+    BOOT_DMAC->channel[BOOT_DMAC_CH].sar = (uint64_t)(uintptr_t)&SPI3->dr[0];
+    BOOT_DMAC->channel[BOOT_DMAC_CH].dar = (uint64_t)(uintptr_t)dst;
+    BOOT_DMAC->channel[BOOT_DMAC_CH].llp = 0;
+    BOOT_DMAC->channel[BOOT_DMAC_CH].block_ts = (uint64_t)len - 1ull;
+    BOOT_DMAC->channel[BOOT_DMAC_CH].ctl =
         BOOT_DMAC_CTL_SMS(0) |
         BOOT_DMAC_CTL_DMS(1) |
         BOOT_DMAC_CTL_SINC(BOOT_DMAC_NOCHANGE) |
@@ -186,14 +187,14 @@ static void spi3_dma_start_rx(uint8_t *dst, uint32_t len)
         BOOT_DMAC_CTL_DST_MSIZE(BOOT_DMAC_MSIZE_16) |
         BOOT_DMAC_CTL_IOC_BLK;
 
-    (void)dmac->channel[BOOT_DMAC_CH].swhssrc;
+    (void)BOOT_DMAC->channel[BOOT_DMAC_CH].swhssrc;
     spi3_dma_enable_channel();
 }
 
 static int spi3_dma_wait_done(void)
 {
     for (uint32_t n = 0; n < SPI3_DMA_TIMEOUT; ++n) {
-        uint64_t intstatus = dmac->channel[BOOT_DMAC_CH].intstatus;
+        uint64_t intstatus = BOOT_DMAC->channel[BOOT_DMAC_CH].intstatus;
         if (intstatus & BOOT_DMAC_INT_ERR_MASK) {
             spi3_dma_clear_ints();
             spi3_dma_disable_channel();
@@ -358,12 +359,12 @@ static int spi3_quad_read_dma_6b(uint32_t addr, uint8_t *rx, uint32_t rx_len)
     {
         uint32_t sr = SPI3->sr;
         uint32_t rxflr = SPI3->rxflr;
-        uint64_t ch_intstatus = dmac->channel[BOOT_DMAC_CH].intstatus;
-        uint64_t ch_status = dmac->channel[BOOT_DMAC_CH].status;
-        uint64_t ch_block = dmac->channel[BOOT_DMAC_CH].block_ts;
-        uint64_t ch_ctl = dmac->channel[BOOT_DMAC_CH].ctl;
-        uint64_t ch_cfg = dmac->channel[BOOT_DMAC_CH].cfg;
-        uint64_t chen = dmac->chen;
+        uint64_t ch_intstatus = BOOT_DMAC->channel[BOOT_DMAC_CH].intstatus;
+        uint64_t ch_status = BOOT_DMAC->channel[BOOT_DMAC_CH].status;
+        uint64_t ch_block = BOOT_DMAC->channel[BOOT_DMAC_CH].block_ts;
+        uint64_t ch_ctl = BOOT_DMAC->channel[BOOT_DMAC_CH].ctl;
+        uint64_t ch_cfg = BOOT_DMAC->channel[BOOT_DMAC_CH].cfg;
+        uint64_t chen = BOOT_DMAC->chen;
         spi3_deassert();
         LOGF("BOOT_QUAD_DMA_FAIL rc=%d addr=0x%08lx len=%lu sr=0x%08lx rxflr=%lu chint=0x%lx chstat=0x%lx block=0x%lx ctl=0x%lx cfg=0x%lx chen=0x%lx",
              dma_rc,
