@@ -333,7 +333,7 @@ static int spi3_quad_read_dma_6b(uint32_t addr, uint8_t *rx, uint32_t rx_len)
     SPI3->ssienr = 0;
     SPI3->ser = 0;
     SPI3->dmacr = 0;
-    SPI3->endian = SPI3_ENDIAN_REVERSED;
+    SPI3->endian = SPI3_ENDIAN_NORMAL;
     SPI3->spi_ctrlr0 =
         (SPI3_TRANS_TYPE_1C1A << SPI3_TRANS_TYPE_OFF) |
         (SPI3_ADDR_L_24BIT << SPI3_ADDR_L_OFF) |
@@ -452,7 +452,7 @@ static void spi3_log_quad_once(void)
     if (spi3_quad_log_done)
         return;
     spi3_quad_log_done = 1;
-    LOGF("BOOT_QUAD_DIRECT cmd=0x%02x addr_bits=24 dummy=%u chunk=%lu dma=k210-direct frame_bits=32 endian=1 sck=65MHz",
+    LOGF("BOOT_QUAD_DIRECT cmd=0x%02x addr_bits=24 dummy=%u chunk=%lu dma=k210-direct frame_bits=32 endian=0 sck=65MHz",
          (unsigned)SPI3_QUAD_READ_CMD,
          (unsigned)SPI3_QUAD_DUMMY_CYCLES,
          (unsigned long)SPI3_QUAD_READ_CHUNK);
