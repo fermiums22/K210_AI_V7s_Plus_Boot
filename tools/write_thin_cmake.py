@@ -3,7 +3,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 
-FREERTOS = r'''# thin boot freertos subset: no network wrappers, no lwIP
+FREERTOS = r'''# thin boot freertos subset: no network wrappers, no lwIP, no os_entry autostart
 set(LIB_SRC
     ${CMAKE_CURRENT_LIST_DIR}/core_sync.c
     ${CMAKE_CURRENT_LIST_DIR}/croutine.c
@@ -17,6 +17,9 @@ set(LIB_SRC
     ${CMAKE_CURRENT_LIST_DIR}/portable/heap_4.c
     ${CMAKE_CURRENT_LIST_DIR}/portable/port.c
     ${CMAKE_CURRENT_LIST_DIR}/portable/portasm.S
+    ${CMAKE_CURRENT_LIST_DIR}/kernel/devices.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/kernel/driver_impl.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/kernel/storage/filesystem.cpp
 )
 set(LIB_INC ${CMAKE_CURRENT_LIST_DIR}/include ${CMAKE_CURRENT_LIST_DIR}/conf ${CMAKE_CURRENT_LIST_DIR}/portable)
 set(ASSEMBLY_FILES ${CMAKE_CURRENT_LIST_DIR}/portable/portasm.S)
@@ -210,4 +213,4 @@ void _init_bsp(int core_id, int number_of_cores)
 (ROOT / "lib" / "bsp" / "CMakeLists.txt").write_text(BSP, encoding="utf-8", newline="\n")
 (ROOT / "lib" / "bsp" / "device" / "registry.cpp").write_text(REGISTRY, encoding="utf-8", newline="\n")
 (ROOT / "lib" / "bsp" / "entry_user.c").write_text(ENTRY_USER, encoding="utf-8", newline="\n")
-print("THIN_BOOT_CMAKE_OK no_lwip=1 no_esp_flasher=1 no_pwm_dvp_i2s=1 asm_language_c=1 thin_registry=1 direct_entry=1")
+print("THIN_BOOT_CMAKE_OK no_lwip=1 no_esp_flasher=1 no_pwm_dvp_i2s=1 asm_language_c=1 thin_registry=1 direct_entry=1 no_os_entry_autostart=1")
