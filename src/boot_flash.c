@@ -116,6 +116,39 @@ static uint64_t boot_cycle_read(void)
     return v;
 }
 
+static inline uint32_t boot_bswap32(uint32_t v)
+{
+    return ((v & 0x000000ffu) << 24) |
+           ((v & 0x0000ff00u) << 8) |
+           ((v & 0x00ff0000u) >> 8) |
+           ((v & 0xff000000u) >> 24);
+}
+
+static void boot_bswap32_buffer(void *buf, uint32_t len)
+{
+    uint32_t *p = (uint32_t *)buf;
+    uint32_t words = len / 4u;
+
+    while (words >= 8u) {
+        p[0] = boot_bswap32(p[0]);
+        p[1] = boot_bswap32(p[1]);
+        p[2] = boot_bswap32(p[2]);
+        p[3] = boot_bswap32(p[3]);
+        p[4] = boot_bswap32(p[4]);
+        p[5] = boot_bswap32(p[5]);
+        p[6] = boot_bswap32(p[6]);
+        p[7] = boot_bswap32(p[7]);
+        p += 8;
+        words -= 8u;
+    }
+
+    while (words) {
+        *p = boot_bswap32(*p);
+        ++p;
+        --words;
+    }
+}
+
 static void spi3_flush_rx_bounded(void)
 {
     for (uint32_t n = 0; n < SPI3_FLUSH_LIMIT; ++n) {
@@ -452,7 +485,7 @@ static void spi3_log_quad_once(void)
     if (spi3_quad_log_done)
         return;
     spi3_quad_log_done = 1;
-    LOGF("BOOT_QUAD_DIRECT cmd=0x%02x addr_bits=24 dummy=%u chunk=%lu dma=k210-direct frame_bits=32 endian=0 sck=65MHz",
+    LOGF("BOOT_QUAD_DIRECT cmd=0x%02x addr_bits=24 dummy=%u chunk=%lu dma=k210-direct frame_bits=32 post=bswap32 sck=65MHz",
          (unsigned)SPI3_QUAD_READ_CMD,
          (unsigned)SPI3_QUAD_DUMMY_CYCLES,
          (unsigned long)SPI3_QUAD_READ_CHUNK);
@@ -484,6 +517,8 @@ int boot_flash_read(uint32_t flash_offset, void *dst, uint32_t len)
         int rc = spi3_quad_read_dma_6b(flash_offset, out, chunk);
         if (rc != 0)
             return rc;
+
+        boot_bswap32_buffer(out, chunk);
 
         out += chunk;
         flash_offset += chunk;
@@ -551,7 +586,7 @@ int boot_flash_load_app_image(const boot_app_header_t *hdr)
         ms = 1;
     kib_s = (((uint64_t)hdr->image_size / 1024ull) * 1000ull) / ms;
 
-    LOGF("BOOT_LOAD_DONE mode=quad-dma32 bytes=%lu ms=%lu KiB/s=%lu",
+    LOGF("BOOT_LOAD_DONE mode=quad-dma32-bswap bytes=%lu ms=%lu KiB/s=%lu",
          (unsigned long)hdr->image_size,
          (unsigned long)ms,
          (unsigned long)kib_s);
