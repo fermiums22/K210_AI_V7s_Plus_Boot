@@ -208,9 +208,48 @@ void _init_bsp(int core_id, int number_of_cores)
 }
 '''
 
+
+def patch_boot_freertos_config() -> None:
+    p = ROOT / "lib" / "freertos" / "conf" / "FreeRTOSConfig.h"
+    s = p.read_text(encoding="utf-8")
+    s = s.replace("#define configTOTAL_HEAP_SIZE\t\t\t\t( ( size_t ) ( 1024 * 1024 ) )",
+                  "#define configTOTAL_HEAP_SIZE\t\t\t\t( ( size_t ) ( 256 * 1024 ) )")
+    s = s.replace("#define configMAIN_TASK_STACK_SIZE\t\t\t\t(4096 * 2)",
+                  "#define configMAIN_TASK_STACK_SIZE\t\t\t\t(2048)")
+    p.write_text(s, encoding="utf-8", newline="\n")
+
+
+def patch_boot_linker_script() -> None:
+    p = ROOT / "lds" / "kendryte.ld"
+    s = p.read_text(encoding="utf-8")
+    s = s.replace("ram (wxa!ri) : ORIGIN = 0x80000000, LENGTH = (6 * 1024 * 1024)",
+                  "ram (wxa!ri) : ORIGIN = 0x80000000, LENGTH = (1 * 1024 * 1024)")
+    s = s.replace("ram_nocache (wxa!ri) : ORIGIN = 0x40000000, LENGTH = (6 * 1024 * 1024)",
+                  "ram_nocache (wxa!ri) : ORIGIN = 0x40000000, LENGTH = (1 * 1024 * 1024)")
+    s = s.replace("PROVIDE( _heap_end = _ram_end );",
+                  "PROVIDE( _heap_end = 0x800E0000 );\n"
+                  "  PROVIDE( _boot_stack_core1 = 0x800F7000 );\n"
+                  "  PROVIDE( _boot_stack_core0 = 0x800FF000 );\n"
+                  "  ASSERT(_end < 0x800E0000, \"boot image/data overlaps heap/stack reserve below APP_LOAD_ADDR\");")
+    p.write_text(s, encoding="utf-8", newline="\n")
+
+
+def patch_boot_crt_stack() -> None:
+    p = ROOT / "lib" / "bsp" / "crt.S"
+    s = p.read_text(encoding="utf-8")
+    old = """  la  tp, _end + 63\n  and tp, tp, -64\n  csrr a0, mhartid\n\n  sll a2, a0, STKSHIFT\n  add tp, tp, a2\n  add sp, a0, 1\n  sll sp, sp, STKSHIFT\n  add sp, sp, tp\n"""
+    new = """  la  tp, _end + 63\n  and tp, tp, -64\n  csrr a0, mhartid\n\n  # Bootloader owns only RAM below APP_LOAD_ADDR (0x80100000).\n  # Keep startup/IRQ stack fixed in that boot-only window so loading the app\n  # to 0x80100000 never overwrites boot stack or TLS.\n  li sp, 0x800ff000\n  sll a2, a0, STKSHIFT\n  sub sp, sp, a2\n"""
+    if old not in s:
+        raise SystemExit("ERROR: crt.S stack block not found")
+    p.write_text(s.replace(old, new), encoding="utf-8", newline="\n")
+
+
 (ROOT / "lib" / "freertos" / "CMakeLists.txt").write_text(FREERTOS, encoding="utf-8", newline="\n")
 (ROOT / "lib" / "drivers" / "CMakeLists.txt").write_text(DRIVERS, encoding="utf-8", newline="\n")
 (ROOT / "lib" / "bsp" / "CMakeLists.txt").write_text(BSP, encoding="utf-8", newline="\n")
 (ROOT / "lib" / "bsp" / "device" / "registry.cpp").write_text(REGISTRY, encoding="utf-8", newline="\n")
 (ROOT / "lib" / "bsp" / "entry_user.c").write_text(ENTRY_USER, encoding="utf-8", newline="\n")
-print("THIN_BOOT_CMAKE_OK no_lwip=1 no_esp_flasher=1 no_pwm_dvp_i2s=1 asm_language_c=1 thin_registry=1 direct_entry=1 no_os_entry_autostart=1")
+patch_boot_freertos_config()
+patch_boot_linker_script()
+patch_boot_crt_stack()
+print("THIN_BOOT_CMAKE_OK no_lwip=1 no_esp_flasher=1 no_pwm_dvp_i2s=1 asm_language_c=1 thin_registry=1 direct_entry=1 no_os_entry_autostart=1 boot_ram_below_app=1 fixed_boot_stack=1 boot_heap_256k=1")
