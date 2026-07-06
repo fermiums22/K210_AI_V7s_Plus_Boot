@@ -100,7 +100,6 @@
 
 #define SPI3_DMA_SELECT_RX         SYSCTL_DMA_SELECT_SSI3_RX_REQ
 #define SPI3_ENDIAN_NORMAL         0u
-#define SPI3_ENDIAN_REVERSED       1u
 
 static volatile spi_t *const SPI3 = (volatile spi_t *)SPI3_BASE_ADDR;
 static volatile dmac_t *const BOOT_DMAC = (volatile dmac_t *)DMAC_BASE_ADDR;
@@ -114,6 +113,17 @@ static uint64_t boot_cycle_read(void)
     uint64_t v;
     __asm__ volatile("rdcycle %0" : "=r"(v));
     return v;
+}
+
+static uint64_t boot_cycles_to_ms(uint64_t cycles)
+{
+    uint64_t ms = (cycles * 1000ull) / BOOT_CYCLE_HZ;
+    return ms ? ms : 1ull;
+}
+
+static uint64_t boot_kib_per_s(uint32_t bytes, uint64_t ms)
+{
+    return (((uint64_t)bytes / 1024ull) * 1000ull) / ms;
 }
 
 static inline uint32_t boot_bswap32(uint32_t v)
@@ -485,24 +495,13 @@ static void spi3_log_quad_once(void)
     if (spi3_quad_log_done)
         return;
     spi3_quad_log_done = 1;
-    LOGF("BOOT_QUAD_DIRECT cmd=0x%02x addr_bits=24 dummy=%u chunk=%lu dma=k210-direct frame_bits=32 post=bswap32 sck=65MHz",
+    LOGF("BOOT_QUAD_DIRECT cmd=0x%02x addr_bits=24 dummy=%u chunk=%lu dma=k210-direct frame_bits=32 post=separate-bswap32 sck=65MHz",
          (unsigned)SPI3_QUAD_READ_CMD,
          (unsigned)SPI3_QUAD_DUMMY_CYCLES,
          (unsigned long)SPI3_QUAD_READ_CHUNK);
 }
 
-uint32_t boot_flash_read_jedec_id(void)
-{
-    uint8_t id[3] = {0xff, 0xff, 0xff};
-
-    boot_flash_spi3_init();
-    if (spi3_read_jedec_id_raw(id) != 0)
-        return 0xffffffffu;
-
-    return ((uint32_t)id[0] << 16) | ((uint32_t)id[1] << 8) | id[2];
-}
-
-int boot_flash_read(uint32_t flash_offset, void *dst, uint32_t len)
+static int boot_flash_read_dma32_raw(uint32_t flash_offset, void *dst, uint32_t len)
 {
     uint8_t *out = (uint8_t *)dst;
     if (!out && len)
@@ -518,13 +517,32 @@ int boot_flash_read(uint32_t flash_offset, void *dst, uint32_t len)
         if (rc != 0)
             return rc;
 
-        boot_bswap32_buffer(out, chunk);
-
         out += chunk;
         flash_offset += chunk;
         len -= chunk;
     }
 
+    return 0;
+}
+
+uint32_t boot_flash_read_jedec_id(void)
+{
+    uint8_t id[3] = {0xff, 0xff, 0xff};
+
+    boot_flash_spi3_init();
+    if (spi3_read_jedec_id_raw(id) != 0)
+        return 0xffffffffu;
+
+    return ((uint32_t)id[0] << 16) | ((uint32_t)id[1] << 8) | id[2];
+}
+
+int boot_flash_read(uint32_t flash_offset, void *dst, uint32_t len)
+{
+    int rc;
+    rc = boot_flash_read_dma32_raw(flash_offset, dst, len);
+    if (rc != 0)
+        return rc;
+    boot_bswap32_buffer(dst, len);
     return 0;
 }
 
@@ -538,16 +556,19 @@ int boot_flash_read_app_header(uint32_t slot_offset, boot_app_header_t *out)
 
 int boot_flash_load_app_image(const boot_app_header_t *hdr)
 {
-    uint32_t done = 0;
-    uint32_t next_log = SPI3_LOAD_LOG_STEP;
     uint64_t t0;
     uint64_t t1;
-    uint64_t dt_cycles;
-    uint64_t ms;
-    uint64_t kib_s;
+    uint64_t t2;
+    uint64_t dma_ms;
+    uint64_t swap_ms;
+    uint64_t total_ms;
+    void *load_ptr;
+    int rc;
 
     if (!hdr)
         return -1;
+
+    load_ptr = (void *)(uintptr_t)hdr->load_addr;
 
     LOGF("BOOT_LOAD_BEGIN flash=0x%08lx ram=0x%08lx size=%lu",
          (unsigned long)APP_SLOT0_FLASH_OFFSET,
@@ -555,40 +576,38 @@ int boot_flash_load_app_image(const boot_app_header_t *hdr)
          (unsigned long)hdr->image_size);
 
     t0 = boot_cycle_read();
+    rc = boot_flash_read_dma32_raw(APP_SLOT0_FLASH_OFFSET, load_ptr, hdr->image_size);
+    t1 = boot_cycle_read();
 
-    while (done < hdr->image_size) {
-        uint32_t left = hdr->image_size - done;
-        uint32_t step = left > SPI3_LOAD_STEP ? SPI3_LOAD_STEP : left;
-        int rc = boot_flash_read(APP_SLOT0_FLASH_OFFSET + done,
-                                 (void *)(uintptr_t)(hdr->load_addr + done),
-                                 step);
-        if (rc != 0) {
-            LOGF("BOOT_LOAD_READ_FAIL offset=0x%08lx done=%lu rc=%d",
-                 (unsigned long)(APP_SLOT0_FLASH_OFFSET + done),
-                 (unsigned long)done,
-                 rc);
-            return rc;
-        }
-
-        done += step;
-        if (done >= next_log || done >= hdr->image_size) {
-            LOGF("BOOT_LOAD_PROGRESS %lu/%lu",
-                 (unsigned long)done,
-                 (unsigned long)hdr->image_size);
-            next_log += SPI3_LOAD_LOG_STEP;
-        }
+    if (rc != 0) {
+        LOGF("BOOT_LOAD_READ_FAIL offset=0x%08lx done=0 rc=%d",
+             (unsigned long)APP_SLOT0_FLASH_OFFSET,
+             rc);
+        return rc;
     }
 
-    t1 = boot_cycle_read();
-    dt_cycles = t1 - t0;
-    ms = (dt_cycles * 1000ull) / BOOT_CYCLE_HZ;
-    if (ms == 0)
-        ms = 1;
-    kib_s = (((uint64_t)hdr->image_size / 1024ull) * 1000ull) / ms;
-
-    LOGF("BOOT_LOAD_DONE mode=quad-dma32-bswap bytes=%lu ms=%lu KiB/s=%lu",
+    dma_ms = boot_cycles_to_ms(t1 - t0);
+    LOGF("BOOT_LOAD_DMA_DONE mode=quad-dma32 bytes=%lu ms=%lu KiB/s=%lu",
          (unsigned long)hdr->image_size,
-         (unsigned long)ms,
-         (unsigned long)kib_s);
+         (unsigned long)dma_ms,
+         (unsigned long)boot_kib_per_s(hdr->image_size, dma_ms));
+
+    boot_bswap32_buffer(load_ptr, hdr->image_size);
+    t2 = boot_cycle_read();
+
+    swap_ms = boot_cycles_to_ms(t2 - t1);
+    total_ms = boot_cycles_to_ms(t2 - t0);
+
+    LOGF("BOOT_LOAD_BSWAP_DONE bytes=%lu ms=%lu KiB/s=%lu",
+         (unsigned long)hdr->image_size,
+         (unsigned long)swap_ms,
+         (unsigned long)boot_kib_per_s(hdr->image_size, swap_ms));
+    LOGF("BOOT_LOAD_PROGRESS %lu/%lu",
+         (unsigned long)hdr->image_size,
+         (unsigned long)hdr->image_size);
+    LOGF("BOOT_LOAD_DONE mode=quad-dma32-bswap-separated bytes=%lu ms=%lu KiB/s=%lu",
+         (unsigned long)hdr->image_size,
+         (unsigned long)total_ms,
+         (unsigned long)boot_kib_per_s(hdr->image_size, total_ms));
     return 0;
 }
