@@ -17,6 +17,17 @@
 #define SPI3_FLUSH_LIMIT    128u
 #define BOOT_CYCLE_HZ       390000000ull
 
+/* SPI3 flash clocking:
+ *   sysctl SPI3 clock = source / ((threshold + 1) * 2)
+ *   DW SPI SCK        = SPI3 clock / baudr
+ * Old code selected IN0=26 MHz, threshold=1, baudr=2 => ~3.25 MHz SCK.
+ * Use PLL0 with a conservative divider.  On the usual 780 MHz PLL0 this gives
+ * SPI3 clock ~78 MHz and SCK ~39 MHz, still below common flash limits but much
+ * faster than the ROM-safe IN0 setup. */
+#define SPI3_CLK_SELECT_PLL0 1u
+#define SPI3_CLK_THRESHOLD   4u
+#define SPI3_BAUDR           2u
+
 #define SPI3_SR_BUSY        0x01u
 #define SPI3_SR_TFNF        0x02u
 #define SPI3_SR_TFE         0x04u
@@ -37,6 +48,7 @@
 #define SPI_CTRL_DFS8        (7u << SPI3_DFS_OFF)
 
 static volatile spi_t *const SPI3 = (volatile spi_t *)SPI3_BASE_ADDR;
+static uint8_t spi3_clock_log_done;
 
 static uint64_t boot_cycle_read(void)
 {
@@ -69,13 +81,13 @@ static void boot_flash_spi3_init(void)
      * to fetch this boot image from flash; resetting it during early boot has
      * proven to cause reset/hang loops on some boards.  Reprogram only the
      * transaction registers we own. */
-    sysctl_clock_set_clock_select(SYSCTL_CLOCK_SELECT_SPI3, 0);
-    sysctl_clock_set_threshold(SYSCTL_THRESHOLD_SPI3, 1);
+    sysctl_clock_set_clock_select(SYSCTL_CLOCK_SELECT_SPI3, SPI3_CLK_SELECT_PLL0);
+    sysctl_clock_set_threshold(SYSCTL_THRESHOLD_SPI3, SPI3_CLK_THRESHOLD);
     sysctl_clock_enable(SYSCTL_CLOCK_SPI3);
 
     SPI3->ssienr = 0;
     SPI3->ser = 0;
-    SPI3->baudr = 2;
+    SPI3->baudr = SPI3_BAUDR;
     SPI3->imr = 0;
     SPI3->dmacr = 0;
     SPI3->dmatdlr = 0x10;
@@ -85,6 +97,18 @@ static void boot_flash_spi3_init(void)
     SPI3->ctrlr0 = SPI_CTRL_MODE0 | SPI_CTRL_FRAME_STD | SPI_CTRL_DFS8;
     (void)SPI3->icr;
     spi3_flush_rx_bounded();
+
+    if (!spi3_clock_log_done) {
+        uint32_t spi3_clk = sysctl_clock_get_freq(SYSCTL_CLOCK_SPI3);
+        uint32_t sck = spi3_clk / SPI3_BAUDR;
+        LOGF("BOOT_SPI3_CLK sel=%u th=%u baudr=%u spi3=%lu sck=%lu",
+             (unsigned)SPI3_CLK_SELECT_PLL0,
+             (unsigned)SPI3_CLK_THRESHOLD,
+             (unsigned)SPI3_BAUDR,
+             (unsigned long)spi3_clk,
+             (unsigned long)sck);
+        spi3_clock_log_done = 1;
+    }
 }
 
 static int spi3_set_tmod(uint32_t tmod)
