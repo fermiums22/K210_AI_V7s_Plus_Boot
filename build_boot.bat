@@ -39,9 +39,6 @@ if not exist "lib\hal" (
   exit /b 2
 )
 
-py -3 -c "from pathlib import Path; p=Path('CMakeLists.txt'); s=p.read_text(); marker='list(REMOVE_ITEM APP_SOURCES \"${CMAKE_SOURCE_DIR}/src/main.c\")'; insert='file(GLOB APP_SOURCES\n    \"${CMAKE_SOURCE_DIR}/src/*.c\"\n    \"${CMAKE_SOURCE_DIR}/src/*.S\"\n)'; p.write_text(s.replace(insert, insert+'\n'+marker) if marker not in s else s)"
-if errorlevel 1 exit /b 1
-
 if not exist "%BUILD%" mkdir "%BUILD%"
 
 echo [cmake] configuring...
