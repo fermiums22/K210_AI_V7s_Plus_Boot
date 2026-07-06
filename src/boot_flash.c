@@ -7,19 +7,20 @@
 #include <string.h>
 #include <sysctl.h>
 
-#define SPI3_CS_MASK        0x01u
-#define SPI3_READ_CMD       0x0bu
-#define SPI3_QUAD_READ_CMD  0x6bu
-#define SPI3_JEDEC_ID_CMD   0x9fu
-#define SPI3_READ_SR1_CMD   0x05u
-#define SPI3_READ_SR2_CMD   0x35u
-#define SPI3_READ_CHUNK     (32u * 1024u)
-#define SPI3_LOAD_STEP      (256u * 1024u)
-#define SPI3_LOAD_LOG_STEP  (1024u * 1024u)
-#define SPI3_TIMEOUT        50000u
-#define SPI3_FLUSH_LIMIT    128u
-#define BOOT_CYCLE_HZ       390000000ull
-#define FLASH_SR2_QE_MASK   0x02u
+#define SPI3_CS_MASK          0x01u
+#define SPI3_READ_CMD         0x0bu
+#define SPI3_QUAD_READ_CMD    0x6bu
+#define SPI3_JEDEC_ID_CMD     0x9fu
+#define SPI3_READ_SR1_CMD     0x05u
+#define SPI3_READ_SR2_CMD     0x35u
+#define SPI3_READ_CHUNK       (32u * 1024u)
+#define SPI3_QUAD_READ_CHUNK  (1024u)
+#define SPI3_LOAD_STEP        (256u * 1024u)
+#define SPI3_LOAD_LOG_STEP    (1024u * 1024u)
+#define SPI3_TIMEOUT          50000u
+#define SPI3_FLUSH_LIMIT      128u
+#define BOOT_CYCLE_HZ         390000000ull
+#define FLASH_SR2_QE_MASK     0x02u
 
 /* SPI3 flash clocking:
  *   sysctl SPI3 clock = source / ((threshold + 1) * 2)
@@ -236,7 +237,13 @@ static int spi3_quad_read_6b(uint32_t addr, uint8_t *rx, uint32_t rx_len)
                 break;
         }
         if (!progressed) {
+            uint32_t sr = SPI3->sr;
             spi3_deassert();
+            LOGF("BOOT_QUAD_READ_TIMEOUT addr=0x%08lx len=%lu got=%lu sr=0x%08lx",
+                 (unsigned long)addr,
+                 (unsigned long)rx_len,
+                 (unsigned long)got,
+                 (unsigned long)sr);
             return -4;
         }
     }
@@ -303,9 +310,10 @@ static void spi3_log_quad_once(void)
     if (spi3_quad_log_done)
         return;
     spi3_quad_log_done = 1;
-    LOGF("BOOT_QUAD_DIRECT cmd=0x%02x addr_bits=24 dummy=%u",
+    LOGF("BOOT_QUAD_DIRECT cmd=0x%02x addr_bits=24 dummy=%u chunk=%lu",
          (unsigned)SPI3_QUAD_READ_CMD,
-         (unsigned)SPI3_QUAD_DUMMY_CYCLES);
+         (unsigned)SPI3_QUAD_DUMMY_CYCLES,
+         (unsigned long)SPI3_QUAD_READ_CHUNK);
 }
 
 uint32_t boot_flash_read_jedec_id(void)
@@ -330,7 +338,7 @@ int boot_flash_read(uint32_t flash_offset, void *dst, uint32_t len)
     spi3_log_quad_once();
 
     while (len) {
-        uint32_t chunk = len > SPI3_READ_CHUNK ? SPI3_READ_CHUNK : len;
+        uint32_t chunk = len > SPI3_QUAD_READ_CHUNK ? SPI3_QUAD_READ_CHUNK : len;
         int rc = spi3_quad_read_6b(flash_offset, out, chunk);
         if (rc != 0)
             return rc;
