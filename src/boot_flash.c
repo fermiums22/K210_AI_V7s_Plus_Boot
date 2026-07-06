@@ -1,4 +1,5 @@
 #include "boot_flash.h"
+#include "log.h"
 
 #include <platform.h>
 #include <spi.h>
@@ -10,6 +11,8 @@
 #define SPI3_READ_CMD       0x03u
 #define SPI3_JEDEC_ID_CMD   0x9fu
 #define SPI3_READ_CHUNK     256u
+#define SPI3_LOAD_STEP      (64u * 1024u)
+#define SPI3_LOAD_LOG_STEP  (256u * 1024u)
 #define SPI3_TIMEOUT        50000u
 #define SPI3_FLUSH_LIMIT    128u
 
@@ -187,7 +190,40 @@ int boot_flash_read_app_header(uint32_t slot_offset, boot_app_header_t *out)
 
 int boot_flash_load_app_image(const boot_app_header_t *hdr)
 {
+    uint32_t done = 0;
+    uint32_t next_log = SPI3_LOAD_LOG_STEP;
+
     if (!hdr)
         return -1;
-    return boot_flash_read(APP_SLOT0_FLASH_OFFSET, (void *)(uintptr_t)hdr->load_addr, hdr->image_size);
+
+    LOGF("BOOT_LOAD_BEGIN flash=0x%08lx ram=0x%08lx size=%lu",
+         (unsigned long)APP_SLOT0_FLASH_OFFSET,
+         (unsigned long)hdr->load_addr,
+         (unsigned long)hdr->image_size);
+
+    while (done < hdr->image_size) {
+        uint32_t left = hdr->image_size - done;
+        uint32_t step = left > SPI3_LOAD_STEP ? SPI3_LOAD_STEP : left;
+        int rc = boot_flash_read(APP_SLOT0_FLASH_OFFSET + done,
+                                 (void *)(uintptr_t)(hdr->load_addr + done),
+                                 step);
+        if (rc != 0) {
+            LOGF("BOOT_LOAD_READ_FAIL offset=0x%08lx done=%lu rc=%d",
+                 (unsigned long)(APP_SLOT0_FLASH_OFFSET + done),
+                 (unsigned long)done,
+                 rc);
+            return rc;
+        }
+
+        done += step;
+        if (done >= next_log || done >= hdr->image_size) {
+            LOGF("BOOT_LOAD_PROGRESS %lu/%lu",
+                 (unsigned long)done,
+                 (unsigned long)hdr->image_size);
+            next_log += SPI3_LOAD_LOG_STEP;
+        }
+    }
+
+    LOG("BOOT_LOAD_DONE");
+    return 0;
 }
