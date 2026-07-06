@@ -5,6 +5,7 @@
 
 uint32_t boot_decision_reset_status_raw;
 boot_app_header_t boot_decision_app_header;
+int boot_decision_app_header_read_rc;
 
 uint32_t boot_decision_read_reset_status(void)
 {
@@ -39,7 +40,8 @@ static int boot_decision_header_struct_valid(const boot_app_header_t *h)
 
 int boot_decision_app_valid(void)
 {
-    if (boot_flash_read_app_header(APP_SLOT0_FLASH_OFFSET, &boot_decision_app_header) != 0)
+    boot_decision_app_header_read_rc = boot_flash_read_app_header(APP_SLOT0_FLASH_OFFSET, &boot_decision_app_header);
+    if (boot_decision_app_header_read_rc != 0)
         return 0;
     return boot_decision_header_struct_valid(&boot_decision_app_header);
 }
