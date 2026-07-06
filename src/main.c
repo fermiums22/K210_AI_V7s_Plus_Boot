@@ -13,6 +13,16 @@
 
 extern void boot_jump_to_app(uintptr_t entry);
 
+static void stay_in_boot(const char *reason)
+{
+    uint32_t n = 0;
+    LOGF("[boot] staying in boot: %s", reason ? reason : "unknown");
+    for (;;) {
+        LOGF("BOOT_ALIVE %lu %s", (unsigned long)n++, reason ? reason : "unknown");
+        vTaskDelay(pdMS_TO_TICKS(1000));
+    }
+}
+
 static int file_exists(const char *path)
 {
     handle_t f = filesystem_file_open(path, FILE_ACCESS_READ, FILE_MODE_OPEN_EXISTING);
@@ -65,15 +75,14 @@ static void boot_task(void *arg)
 {
     (void)arg;
 
-    log_init();
+    LOG("BOOT_TASK_START");
     LOG("[boot] " BOOT_VERSION " start");
     LOGF("[boot] default app load=0x%08lx entry=0x%08lx", (unsigned long)APP_LOAD_ADDR,
          (unsigned long)APP_ENTRY_ADDR);
 
     if (!sd_mount()) {
-        LOG("[boot] SD mount failed; staying in boot");
-        for (;;)
-            vTaskDelay(pdMS_TO_TICKS(1000));
+        LOG("[boot] SD mount failed");
+        stay_in_boot("sd_mount_failed");
     }
 
     LOG("[boot] SD mounted");
@@ -87,30 +96,43 @@ static void boot_task(void *arg)
 
     if (!file_exists(BOOT_APP_IMAGE_PATH)) {
         LOGF("[boot] no app image at %s", BOOT_APP_IMAGE_PATH);
-        LOG("[boot] staying in boot");
-        for (;;)
-            vTaskDelay(pdMS_TO_TICKS(1000));
+        stay_in_boot("no_app_image");
     }
 
     int size = load_file_to_ram(BOOT_APP_IMAGE_PATH, APP_LOAD_ADDR, APP_MAX_SIZE);
     if (size <= 0) {
-        LOG("[boot] app load failed; staying in boot");
-        for (;;)
-            vTaskDelay(pdMS_TO_TICKS(1000));
+        LOG("[boot] app load failed");
+        stay_in_boot("app_load_failed");
     }
 
     LOG("[boot] jumping to app");
     vTaskDelay(pdMS_TO_TICKS(50));
     boot_jump_to_app(APP_ENTRY_ADDR);
 
-    for (;;)
-        vTaskDelay(pdMS_TO_TICKS(1000));
+    stay_in_boot("jump_returned");
 }
 
 int main(void)
 {
-    xTaskCreate(boot_task, "boot", 8192, NULL, tskIDLE_PRIORITY + 2, NULL);
+    log_init();
+    LOG("BOOT_EARLY_MAIN");
+    LOG("BOOT_BEFORE_SCHEDULER");
+
+    if (xTaskCreate(boot_task, "boot", 8192, NULL, tskIDLE_PRIORITY + 2, NULL) != pdPASS) {
+        for (;;) {
+            LOG("BOOT_TASK_CREATE_FAIL");
+            for (volatile uint32_t i = 0; i < 20000000u; ++i) {
+                __asm__ volatile("nop");
+            }
+        }
+    }
+
     vTaskStartScheduler();
-    for (;;)
-        ;
+
+    for (;;) {
+        LOG("BOOT_SCHEDULER_RETURNED");
+        for (volatile uint32_t i = 0; i < 20000000u; ++i) {
+            __asm__ volatile("nop");
+        }
+    }
 }
