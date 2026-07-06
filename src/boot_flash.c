@@ -9,13 +9,13 @@
 #define SPI3_CS_MASK        0x01u
 #define SPI3_READ_CMD       0x03u
 #define SPI3_JEDEC_ID_CMD   0x9fu
-#define SPI3_RX_DUMMY       0x00u
 #define SPI3_READ_CHUNK     256u
 #define SPI3_TIMEOUT        1000000u
 #define SPI3_FLUSH_LIMIT    1024u
 
 #define SPI3_SR_BUSY        0x01u
 #define SPI3_SR_TFNF        0x02u
+#define SPI3_SR_TFE         0x04u
 #define SPI3_SR_RFNE        0x08u
 
 #define SPI3_MOD_OFF        8u
@@ -23,10 +23,14 @@
 #define SPI3_TMOD_OFF       10u
 #define SPI3_FRF_OFF        22u
 
-#define SPI_CTRL_TMOD_FULL  (0u << SPI3_TMOD_OFF)
-#define SPI_CTRL_FRAME_STD  (0u << SPI3_FRF_OFF)
-#define SPI_CTRL_MODE0      (0u << SPI3_MOD_OFF)
-#define SPI_CTRL_DFS8       (7u << SPI3_DFS_OFF)
+#define SPI_TMOD_FULL_DUPLEX 0u
+#define SPI_TMOD_TX_ONLY     1u
+#define SPI_TMOD_RX_ONLY     2u
+#define SPI_TMOD_EEPROM_READ 3u
+
+#define SPI_CTRL_FRAME_STD   (0u << SPI3_FRF_OFF)
+#define SPI_CTRL_MODE0       (0u << SPI3_MOD_OFF)
+#define SPI_CTRL_DFS8        (7u << SPI3_DFS_OFF)
 
 static volatile spi_t *const SPI3 = (volatile spi_t *)SPI3_BASE_ADDR;
 
@@ -37,6 +41,15 @@ static void spi3_flush_rx_bounded(void)
             break;
         (void)SPI3->dr[0];
     }
+}
+
+static int spi3_wait_mask(uint32_t mask, uint32_t value)
+{
+    for (uint32_t n = 0; n < SPI3_TIMEOUT; ++n) {
+        if ((SPI3->sr & mask) == value)
+            return 0;
+    }
+    return -1;
 }
 
 static void boot_flash_spi3_init(void)
@@ -60,70 +73,82 @@ static void boot_flash_spi3_init(void)
     SPI3->dmardlr = 0;
     SPI3->rx_sample_delay = 0;
     SPI3->spi_ctrlr0 = 0;
-    SPI3->ctrlr0 = SPI_CTRL_MODE0 | SPI_CTRL_FRAME_STD | SPI_CTRL_TMOD_FULL | SPI_CTRL_DFS8;
+    SPI3->ctrlr0 = SPI_CTRL_MODE0 | SPI_CTRL_FRAME_STD | SPI_CTRL_DFS8;
     (void)SPI3->icr;
     spi3_flush_rx_bounded();
 }
 
-static int spi3_wait_mask(uint32_t mask, uint32_t value)
+static int spi3_set_tmod(uint32_t tmod)
 {
-    for (uint32_t n = 0; n < SPI3_TIMEOUT; ++n) {
-        if ((SPI3->sr & mask) == value)
-            return 0;
-    }
-    return -1;
-}
-
-static int spi3_xfer8(uint8_t tx, uint8_t *rx)
-{
-    if (spi3_wait_mask(SPI3_SR_TFNF, SPI3_SR_TFNF) != 0)
+    if (spi3_wait_mask(SPI3_SR_BUSY, 0) != 0)
         return -1;
-    SPI3->dr[0] = tx;
-    if (spi3_wait_mask(SPI3_SR_RFNE, SPI3_SR_RFNE) != 0)
-        return -2;
-    if (rx)
-        *rx = (uint8_t)SPI3->dr[0];
-    else
-        (void)SPI3->dr[0];
+    SPI3->ssienr = 0;
+    SPI3->ctrlr0 = SPI_CTRL_MODE0 | SPI_CTRL_FRAME_STD | SPI_CTRL_DFS8 | (tmod << SPI3_TMOD_OFF);
     return 0;
-}
-
-static void spi3_select(void)
-{
-    SPI3->ssienr = 1;
-    SPI3->ser = SPI3_CS_MASK;
 }
 
 static void spi3_deassert(void)
 {
     SPI3->ser = 0;
-    if (spi3_wait_mask(SPI3_SR_BUSY, 0) != 0) {
-        SPI3->ssienr = 0;
-        spi3_flush_rx_bounded();
-        return;
-    }
+    (void)spi3_wait_mask(SPI3_SR_BUSY, 0);
     SPI3->ssienr = 0;
     spi3_flush_rx_bounded();
 }
 
+static int spi3_eeprom_read(const uint8_t *cmd, uint32_t cmd_len, uint8_t *rx, uint32_t rx_len)
+{
+    uint32_t got = 0;
+    if (!cmd || !cmd_len || (!rx && rx_len))
+        return -1;
+    if (rx_len == 0)
+        return 0;
+
+    if (spi3_set_tmod(SPI_TMOD_EEPROM_READ) != 0)
+        return -2;
+
+    SPI3->ctrlr1 = rx_len - 1u;
+    SPI3->ssienr = 1;
+
+    for (uint32_t i = 0; i < cmd_len; ++i) {
+        if (spi3_wait_mask(SPI3_SR_TFNF, SPI3_SR_TFNF) != 0) {
+            spi3_deassert();
+            return -3;
+        }
+        SPI3->dr[0] = cmd[i];
+    }
+
+    SPI3->ser = SPI3_CS_MASK;
+
+    while (got < rx_len) {
+        uint32_t progressed = 0;
+        for (uint32_t n = 0; n < SPI3_TIMEOUT; ++n) {
+            while ((SPI3->sr & SPI3_SR_RFNE) && got < rx_len) {
+                rx[got++] = (uint8_t)SPI3->dr[0];
+                progressed = 1;
+            }
+            if (progressed)
+                break;
+        }
+        if (!progressed) {
+            spi3_deassert();
+            return -4;
+        }
+    }
+
+    spi3_deassert();
+    return 0;
+}
+
 uint32_t boot_flash_read_jedec_id(void)
 {
-    uint8_t b0 = 0xff;
-    uint8_t b1 = 0xff;
-    uint8_t b2 = 0xff;
+    uint8_t cmd = SPI3_JEDEC_ID_CMD;
+    uint8_t id[3] = {0xff, 0xff, 0xff};
 
     boot_flash_spi3_init();
-    spi3_select();
-    if (spi3_xfer8(SPI3_JEDEC_ID_CMD, 0) != 0 ||
-        spi3_xfer8(SPI3_RX_DUMMY, &b0) != 0 ||
-        spi3_xfer8(SPI3_RX_DUMMY, &b1) != 0 ||
-        spi3_xfer8(SPI3_RX_DUMMY, &b2) != 0) {
-        spi3_deassert();
+    if (spi3_eeprom_read(&cmd, 1, id, sizeof(id)) != 0)
         return 0xffffffffu;
-    }
-    spi3_deassert();
 
-    return ((uint32_t)b0 << 16) | ((uint32_t)b1 << 8) | b2;
+    return ((uint32_t)id[0] << 16) | ((uint32_t)id[1] << 8) | id[2];
 }
 
 int boot_flash_read(uint32_t flash_offset, void *dst, uint32_t len)
@@ -137,25 +162,15 @@ int boot_flash_read(uint32_t flash_offset, void *dst, uint32_t len)
     while (len) {
         uint32_t chunk = len > SPI3_READ_CHUNK ? SPI3_READ_CHUNK : len;
         uint32_t addr = flash_offset;
-
-        spi3_select();
-
-        if (spi3_xfer8(SPI3_READ_CMD, 0) != 0 ||
-            spi3_xfer8((uint8_t)(addr >> 16), 0) != 0 ||
-            spi3_xfer8((uint8_t)(addr >> 8), 0) != 0 ||
-            spi3_xfer8((uint8_t)(addr >> 0), 0) != 0) {
-            spi3_deassert();
-            return -2;
-        }
-
-        for (uint32_t i = 0; i < chunk; ++i) {
-            if (spi3_xfer8(SPI3_RX_DUMMY, &out[i]) != 0) {
-                spi3_deassert();
-                return -3;
-            }
-        }
-
-        spi3_deassert();
+        uint8_t cmd[4] = {
+            SPI3_READ_CMD,
+            (uint8_t)(addr >> 16),
+            (uint8_t)(addr >> 8),
+            (uint8_t)(addr >> 0),
+        };
+        int rc = spi3_eeprom_read(cmd, sizeof(cmd), out, chunk);
+        if (rc != 0)
+            return rc;
 
         out += chunk;
         flash_offset += chunk;
