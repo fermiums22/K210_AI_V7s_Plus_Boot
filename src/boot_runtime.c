@@ -19,6 +19,13 @@ static void boot_task(void *arg)
     }
 }
 
+static void boot_halt_no_scheduler(const char *msg)
+{
+    LOG(msg);
+    for (;;)
+        __asm__ volatile("wfi");
+}
+
 void boot_runtime_start(uint32_t reason)
 {
     g_boot_reason = reason;
@@ -33,19 +40,10 @@ void boot_runtime_start(uint32_t reason)
          (unsigned)((g_boot_reason & BOOT_REASON_WDG_RESET) != 0),
          (unsigned)((g_boot_reason & BOOT_REASON_APP_INVALID) != 0));
 
-    if (xTaskCreate(boot_task, "boot", 4096, NULL, tskIDLE_PRIORITY + 2, NULL) != pdPASS) {
-        for (;;) {
-            LOG("BOOT_TASK_CREATE_FAIL");
-            for (volatile uint32_t i = 0; i < 20000000u; ++i)
-                __asm__ volatile("nop");
-        }
-    }
+    if (xTaskCreate(boot_task, "boot", 4096, NULL, tskIDLE_PRIORITY + 2, NULL) != pdPASS)
+        boot_halt_no_scheduler("BOOT_TASK_CREATE_FAIL");
 
     vTaskStartScheduler();
 
-    for (;;) {
-        LOG("BOOT_SCHEDULER_RETURNED");
-        for (volatile uint32_t i = 0; i < 20000000u; ++i)
-            __asm__ volatile("nop");
-    }
+    boot_halt_no_scheduler("BOOT_SCHEDULER_RETURNED");
 }
