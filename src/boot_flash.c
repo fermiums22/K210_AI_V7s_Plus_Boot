@@ -10,8 +10,8 @@
 #define SPI3_READ_CMD       0x03u
 #define SPI3_JEDEC_ID_CMD   0x9fu
 #define SPI3_READ_CHUNK     256u
-#define SPI3_TIMEOUT        1000000u
-#define SPI3_FLUSH_LIMIT    1024u
+#define SPI3_TIMEOUT        50000u
+#define SPI3_FLUSH_LIMIT    128u
 
 #define SPI3_SR_BUSY        0x01u
 #define SPI3_SR_TFNF        0x02u
@@ -54,19 +54,17 @@ static int spi3_wait_mask(uint32_t mask, uint32_t value)
 
 static void boot_flash_spi3_init(void)
 {
-    /*
-     * The boot decision runs before the full SDK runtime. Do not rely on ROM or
-     * kflash ISP side effects for SPI3 clocking; explicitly put SPI3 on the
-     * safe 26 MHz IN0 clock and divide it down before talking to the flash.
-     */
-    sysctl_clock_set_clock_select(SYSCTL_CLOCK_SELECT_SPI3, 0); /* IN0 */
-    sysctl_clock_set_threshold(SYSCTL_THRESHOLD_SPI3, 1);       /* 26M / 4 */
+    /* Do not hard-reset SPI3 here.  The ROM has just used the same controller
+     * to fetch this boot image from flash; resetting it during early boot has
+     * proven to cause reset/hang loops on some boards.  Reprogram only the
+     * transaction registers we own. */
+    sysctl_clock_set_clock_select(SYSCTL_CLOCK_SELECT_SPI3, 0);
+    sysctl_clock_set_threshold(SYSCTL_THRESHOLD_SPI3, 1);
     sysctl_clock_enable(SYSCTL_CLOCK_SPI3);
-    sysctl_reset(SYSCTL_RESET_SPI3);
 
     SPI3->ssienr = 0;
     SPI3->ser = 0;
-    SPI3->baudr = 4;
+    SPI3->baudr = 8;
     SPI3->imr = 0;
     SPI3->dmacr = 0;
     SPI3->dmatdlr = 0x10;
@@ -80,8 +78,7 @@ static void boot_flash_spi3_init(void)
 
 static int spi3_set_tmod(uint32_t tmod)
 {
-    if (spi3_wait_mask(SPI3_SR_BUSY, 0) != 0)
-        return -1;
+    (void)spi3_wait_mask(SPI3_SR_BUSY, 0);
     SPI3->ssienr = 0;
     SPI3->ctrlr0 = SPI_CTRL_MODE0 | SPI_CTRL_FRAME_STD | SPI_CTRL_DFS8 | (tmod << SPI3_TMOD_OFF);
     return 0;
