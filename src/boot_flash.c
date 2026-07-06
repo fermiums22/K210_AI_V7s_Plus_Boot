@@ -12,6 +12,11 @@
 #define SPI3_RX_DUMMY       0x00u
 #define SPI3_READ_CHUNK     256u
 #define SPI3_TIMEOUT        1000000u
+#define SPI3_FLUSH_LIMIT    1024u
+
+#define SPI3_SR_BUSY        0x01u
+#define SPI3_SR_TFNF        0x02u
+#define SPI3_SR_RFNE        0x08u
 
 #define SPI3_MOD_OFF        8u
 #define SPI3_DFS_OFF        0u
@@ -24,6 +29,15 @@
 #define SPI_CTRL_DFS8       (7u << SPI3_DFS_OFF)
 
 static volatile spi_t *const SPI3 = (volatile spi_t *)SPI3_BASE_ADDR;
+
+static void spi3_flush_rx_bounded(void)
+{
+    for (uint32_t n = 0; n < SPI3_FLUSH_LIMIT; ++n) {
+        if ((SPI3->sr & SPI3_SR_RFNE) == 0)
+            break;
+        (void)SPI3->dr[0];
+    }
+}
 
 static void boot_flash_spi3_init(void)
 {
@@ -48,9 +62,7 @@ static void boot_flash_spi3_init(void)
     SPI3->spi_ctrlr0 = 0;
     SPI3->ctrlr0 = SPI_CTRL_MODE0 | SPI_CTRL_FRAME_STD | SPI_CTRL_TMOD_FULL | SPI_CTRL_DFS8;
     (void)SPI3->icr;
-
-    while (SPI3->sr & 0x08u)
-        (void)SPI3->dr[0];
+    spi3_flush_rx_bounded();
 }
 
 static int spi3_wait_mask(uint32_t mask, uint32_t value)
@@ -64,10 +76,10 @@ static int spi3_wait_mask(uint32_t mask, uint32_t value)
 
 static int spi3_xfer8(uint8_t tx, uint8_t *rx)
 {
-    if (spi3_wait_mask(0x02u, 0x02u) != 0)
+    if (spi3_wait_mask(SPI3_SR_TFNF, SPI3_SR_TFNF) != 0)
         return -1;
     SPI3->dr[0] = tx;
-    if (spi3_wait_mask(0x08u, 0x08u) != 0)
+    if (spi3_wait_mask(SPI3_SR_RFNE, SPI3_SR_RFNE) != 0)
         return -2;
     if (rx)
         *rx = (uint8_t)SPI3->dr[0];
@@ -85,7 +97,13 @@ static void spi3_select(void)
 static void spi3_deassert(void)
 {
     SPI3->ser = 0;
+    if (spi3_wait_mask(SPI3_SR_BUSY, 0) != 0) {
+        SPI3->ssienr = 0;
+        spi3_flush_rx_bounded();
+        return;
+    }
     SPI3->ssienr = 0;
+    spi3_flush_rx_bounded();
 }
 
 uint32_t boot_flash_read_jedec_id(void)
@@ -137,10 +155,6 @@ int boot_flash_read(uint32_t flash_offset, void *dst, uint32_t len)
             }
         }
 
-        if (spi3_wait_mask(0x01u, 0x00u) != 0) {
-            spi3_deassert();
-            return -4;
-        }
         spi3_deassert();
 
         out += chunk;
