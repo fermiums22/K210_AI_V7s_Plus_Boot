@@ -5,6 +5,10 @@ cd /d "%~dp0"
 chcp 65001 >nul
 set "PYTHONUTF8=1"
 set "PYTHONIOENCODING=utf-8"
+set "NO_COLOR=1"
+set "CLICOLOR=0"
+set "PY_COLORS=0"
+set "TERM=dumb"
 
 set "PORT=%~1"
 if "%PORT%"=="" set "PORT=COM8"
@@ -56,9 +60,6 @@ echo Repo: %CD%
 echo Port: %PORT%
 echo Baud: %KFLASH_BAUD%
 echo.
-
-reg add HKCU\Console /v VirtualTerminalLevel /t REG_DWORD /d 1 /f >nul 2>nul
-py -3 -c "import ctypes; k=ctypes.windll.kernel32; ENABLE=4; handles=(-11,-12); mode=ctypes.c_uint(); [k.SetConsoleMode(k.GetStdHandle(h), (k.GetConsoleMode(k.GetStdHandle(h), ctypes.byref(mode)) and (mode.value|ENABLE)) or (mode.value|ENABLE)) for h in handles]" >nul 2>nul
 
 if "%NO_BUILD%"=="0" (
   call build_boot.bat
