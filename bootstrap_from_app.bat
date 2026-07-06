@@ -42,5 +42,12 @@ if errorlevel 1 (
   exit /b 5
 )
 
+py -3 -c "from pathlib import Path; p=Path('lds/kendryte.ld'); s=p.read_text(); s=s.replace('PROVIDE( _heap_end = 0x800E0000 );\n  PROVIDE( _boot_stack_core1 = 0x800F7000 );\n  PROVIDE( _boot_stack_core0 = 0x800FF000 );\n  ASSERT(_end < 0x800E0000, \"boot image/data overlaps heap/stack reserve below APP_LOAD_ADDR\");', 'PROVIDE( _heap_end = 0x800E0000 );'); p.write_text(s)"
+if errorlevel 1 (
+  echo ERROR: boot linker post-fix failed
+  exit /b 6
+)
+
+echo BOOT_LINKER_POSTFIX_OK heap_end=0x800E0000 no_assert=1
 echo.
 echo OK: SDK/libs and shared SD/log sources copied and thinned for boot.
