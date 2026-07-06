@@ -14,7 +14,7 @@
 #define SPI3_READ_SR1_CMD     0x05u
 #define SPI3_READ_SR2_CMD     0x35u
 #define SPI3_READ_CHUNK       (32u * 1024u)
-#define SPI3_QUAD_READ_CHUNK  (1024u)
+#define SPI3_QUAD_READ_CHUNK  (512u)
 #define SPI3_LOAD_STEP        (256u * 1024u)
 #define SPI3_LOAD_LOG_STEP    (1024u * 1024u)
 #define SPI3_TIMEOUT          50000u
