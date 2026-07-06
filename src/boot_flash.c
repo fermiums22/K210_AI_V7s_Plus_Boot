@@ -8,11 +8,11 @@
 #include <sysctl.h>
 
 #define SPI3_CS_MASK        0x01u
-#define SPI3_READ_CMD       0x03u
+#define SPI3_READ_CMD       0x0bu
 #define SPI3_JEDEC_ID_CMD   0x9fu
-#define SPI3_READ_CHUNK     (4u * 1024u)
-#define SPI3_LOAD_STEP      (64u * 1024u)
-#define SPI3_LOAD_LOG_STEP  (512u * 1024u)
+#define SPI3_READ_CHUNK     (32u * 1024u)
+#define SPI3_LOAD_STEP      (256u * 1024u)
+#define SPI3_LOAD_LOG_STEP  (1024u * 1024u)
 #define SPI3_TIMEOUT        50000u
 #define SPI3_FLUSH_LIMIT    128u
 
@@ -162,11 +162,12 @@ int boot_flash_read(uint32_t flash_offset, void *dst, uint32_t len)
     while (len) {
         uint32_t chunk = len > SPI3_READ_CHUNK ? SPI3_READ_CHUNK : len;
         uint32_t addr = flash_offset;
-        uint8_t cmd[4] = {
+        uint8_t cmd[5] = {
             SPI3_READ_CMD,
             (uint8_t)(addr >> 16),
             (uint8_t)(addr >> 8),
             (uint8_t)(addr >> 0),
+            0x00u, /* 0x0B fast-read dummy byte */
         };
         int rc = spi3_eeprom_read(cmd, sizeof(cmd), out, chunk);
         if (rc != 0)
