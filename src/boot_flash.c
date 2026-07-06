@@ -8,6 +8,7 @@
 
 #define SPI3_CS_MASK        0x01u
 #define SPI3_READ_CMD       0x03u
+#define SPI3_JEDEC_ID_CMD   0x9fu
 #define SPI3_RX_DUMMY       0x00u
 #define SPI3_READ_CHUNK     256u
 #define SPI3_TIMEOUT        1000000u
@@ -26,10 +27,19 @@ static volatile spi_t *const SPI3 = (volatile spi_t *)SPI3_BASE_ADDR;
 
 static void boot_flash_spi3_init(void)
 {
+    /*
+     * The boot decision runs before the full SDK runtime. Do not rely on ROM or
+     * kflash ISP side effects for SPI3 clocking; explicitly put SPI3 on the
+     * safe 26 MHz IN0 clock and divide it down before talking to the flash.
+     */
+    sysctl_clock_set_clock_select(SYSCTL_CLOCK_SELECT_SPI3, 0); /* IN0 */
+    sysctl_clock_set_threshold(SYSCTL_THRESHOLD_SPI3, 1);       /* 26M / 4 */
     sysctl_clock_enable(SYSCTL_CLOCK_SPI3);
+    sysctl_reset(SYSCTL_RESET_SPI3);
+
     SPI3->ssienr = 0;
     SPI3->ser = 0;
-    SPI3->baudr = 8;
+    SPI3->baudr = 4;
     SPI3->imr = 0;
     SPI3->dmacr = 0;
     SPI3->dmatdlr = 0x10;
@@ -38,6 +48,9 @@ static void boot_flash_spi3_init(void)
     SPI3->spi_ctrlr0 = 0;
     SPI3->ctrlr0 = SPI_CTRL_MODE0 | SPI_CTRL_FRAME_STD | SPI_CTRL_TMOD_FULL | SPI_CTRL_DFS8;
     (void)SPI3->icr;
+
+    while (SPI3->sr & 0x08u)
+        (void)SPI3->dr[0];
 }
 
 static int spi3_wait_mask(uint32_t mask, uint32_t value)
@@ -63,10 +76,36 @@ static int spi3_xfer8(uint8_t tx, uint8_t *rx)
     return 0;
 }
 
+static void spi3_select(void)
+{
+    SPI3->ssienr = 1;
+    SPI3->ser = SPI3_CS_MASK;
+}
+
 static void spi3_deassert(void)
 {
     SPI3->ser = 0;
     SPI3->ssienr = 0;
+}
+
+uint32_t boot_flash_read_jedec_id(void)
+{
+    uint8_t b0 = 0xff;
+    uint8_t b1 = 0xff;
+    uint8_t b2 = 0xff;
+
+    boot_flash_spi3_init();
+    spi3_select();
+    if (spi3_xfer8(SPI3_JEDEC_ID_CMD, 0) != 0 ||
+        spi3_xfer8(SPI3_RX_DUMMY, &b0) != 0 ||
+        spi3_xfer8(SPI3_RX_DUMMY, &b1) != 0 ||
+        spi3_xfer8(SPI3_RX_DUMMY, &b2) != 0) {
+        spi3_deassert();
+        return 0xffffffffu;
+    }
+    spi3_deassert();
+
+    return ((uint32_t)b0 << 16) | ((uint32_t)b1 << 8) | b2;
 }
 
 int boot_flash_read(uint32_t flash_offset, void *dst, uint32_t len)
@@ -81,8 +120,7 @@ int boot_flash_read(uint32_t flash_offset, void *dst, uint32_t len)
         uint32_t chunk = len > SPI3_READ_CHUNK ? SPI3_READ_CHUNK : len;
         uint32_t addr = flash_offset;
 
-        SPI3->ssienr = 1;
-        SPI3->ser = SPI3_CS_MASK;
+        spi3_select();
 
         if (spi3_xfer8(SPI3_READ_CMD, 0) != 0 ||
             spi3_xfer8((uint8_t)(addr >> 16), 0) != 0 ||
