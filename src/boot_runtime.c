@@ -7,6 +7,8 @@
 #include "log.h"
 
 static uint32_t g_boot_reason;
+static StaticTask_t s_idle_task;
+static StackType_t s_idle_task_stack[configMINIMAL_STACK_SIZE];
 
 static void boot_task(void *arg)
 {
@@ -22,6 +24,27 @@ static void boot_task(void *arg)
 static void boot_halt_no_scheduler(const char *msg)
 {
     LOG(msg);
+    for (;;)
+        __asm__ volatile("wfi");
+}
+
+void vApplicationIdleHook(void)
+{
+}
+
+void vApplicationGetIdleTaskMemory(StaticTask_t **ppxIdleTaskTCBBuffer,
+                                   StackType_t **ppxIdleTaskStackBuffer,
+                                   uint32_t *pulIdleTaskStackSize)
+{
+    *ppxIdleTaskTCBBuffer = &s_idle_task;
+    *ppxIdleTaskStackBuffer = s_idle_task_stack;
+    *pulIdleTaskStackSize = configMINIMAL_STACK_SIZE;
+}
+
+void vApplicationStackOverflowHook(TaskHandle_t xTask, char *pcTaskName)
+{
+    (void)xTask;
+    LOGF("BOOT_STACK_OVERFLOW %s", pcTaskName ? pcTaskName : "unknown");
     for (;;)
         __asm__ volatile("wfi");
 }
