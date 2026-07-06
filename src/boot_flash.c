@@ -10,9 +10,9 @@
 #define SPI3_CS_MASK        0x01u
 #define SPI3_READ_CMD       0x03u
 #define SPI3_JEDEC_ID_CMD   0x9fu
-#define SPI3_READ_CHUNK     256u
+#define SPI3_READ_CHUNK     (4u * 1024u)
 #define SPI3_LOAD_STEP      (64u * 1024u)
-#define SPI3_LOAD_LOG_STEP  (256u * 1024u)
+#define SPI3_LOAD_LOG_STEP  (512u * 1024u)
 #define SPI3_TIMEOUT        50000u
 #define SPI3_FLUSH_LIMIT    128u
 
@@ -67,7 +67,7 @@ static void boot_flash_spi3_init(void)
 
     SPI3->ssienr = 0;
     SPI3->ser = 0;
-    SPI3->baudr = 8;
+    SPI3->baudr = 2;
     SPI3->imr = 0;
     SPI3->dmacr = 0;
     SPI3->dmatdlr = 0x10;
