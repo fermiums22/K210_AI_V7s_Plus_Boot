@@ -32,6 +32,10 @@ if(BOOT_DIAG_BEFORE_JUMP)
     target_compile_definitions(k210_boot PRIVATE BOOT_DIAG_BEFORE_JUMP=1)
 endif()
 
+if(BOOT_ENABLE_SLOT_PROBE)
+    target_compile_definitions(k210_boot PRIVATE BOOT_ENABLE_SLOT_PROBE=1)
+endif()
+
 target_include_directories(k210_boot PRIVATE
     "${CMAKE_SOURCE_DIR}/src"
     "${CMAKE_SOURCE_DIR}/lib/arch/include"
