@@ -12,9 +12,11 @@ include_directories(
     "${CMAKE_SOURCE_DIR}/lib/utils/include"
     "${CMAKE_SOURCE_DIR}/lib"
     "${CMAKE_SOURCE_DIR}/third_party"
+    "${CMAKE_SOURCE_DIR}/third_party/lwip/src/include"
 )
 
 add_subdirectory("${CMAKE_SOURCE_DIR}/third_party/fatfs" "${CMAKE_BINARY_DIR}/fatfs")
+add_subdirectory("${CMAKE_SOURCE_DIR}/third_party/lwip"  "${CMAKE_BINARY_DIR}/lwip")
 add_subdirectory("${CMAKE_SOURCE_DIR}/lib/hal"      "${CMAKE_BINARY_DIR}/hal")
 add_subdirectory("${CMAKE_SOURCE_DIR}/lib/freertos" "${CMAKE_BINARY_DIR}/freertos")
 add_subdirectory("${CMAKE_SOURCE_DIR}/lib/bsp"      "${CMAKE_BINARY_DIR}/bsp")
@@ -39,11 +41,12 @@ target_include_directories(k210_boot PRIVATE
     "${CMAKE_SOURCE_DIR}/lib/freertos/conf"
     "${CMAKE_SOURCE_DIR}/lib/freertos/portable"
     "${CMAKE_SOURCE_DIR}/third_party/fatfs/source"
+    "${CMAKE_SOURCE_DIR}/third_party/lwip/src/include"
 )
 
 target_link_libraries(k210_boot
     -Wl,--start-group
-    m freertos atomic bsp c stdc++ drivers hal posix fatfs
+    m freertos atomic bsp c stdc++ drivers hal posix fatfs lwipcore
     -Wl,--end-group
 )
 
