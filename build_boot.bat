@@ -10,6 +10,9 @@ set "TC=%K210_TC%"
 if "%TC%"=="" if exist "C:\K210\toolchain\kendryte-toolchain\bin\riscv64-unknown-elf-gcc.exe" set "TC=C:\K210\toolchain\kendryte-toolchain\bin"
 if "%TC%"=="" set "TC=C:\K210\toolchain\kendryte-toolchain\bin"
 
+set "BOOT_SLOT_PROBE=%BOOT_SLOT_PROBE%"
+if "%BOOT_SLOT_PROBE%"=="" set "BOOT_SLOT_PROBE=0"
+
 set "BUILD=%CD%\build"
 set "MAKE=%TC%\mingw32-make.exe"
 if not exist "%MAKE%" set "MAKE=C:\msys64\mingw64\bin\mingw32-make.exe"
@@ -19,6 +22,7 @@ echo Repo:  %CD%
 echo TC:    %TC%
 echo MAKE:  %MAKE%
 echo BUILD: %BUILD%
+echo Slot probe: %BOOT_SLOT_PROBE%
 echo.
 
 if not exist "%TC%" (
@@ -42,7 +46,7 @@ if not exist "lib\hal" (
 if not exist "%BUILD%" mkdir "%BUILD%"
 
 echo [cmake] configuring...
-cmake -S . -B "%BUILD%" -G "MinGW Makefiles" -DCMAKE_MAKE_PROGRAM="%MAKE%" -DTOOLCHAIN="%TC%" -DSDK_ROOT="%SDK%" -DCMAKE_POLICY_VERSION_MINIMUM=3.5
+cmake -S . -B "%BUILD%" -G "MinGW Makefiles" -DCMAKE_MAKE_PROGRAM="%MAKE%" -DTOOLCHAIN="%TC%" -DSDK_ROOT="%SDK%" -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DBOOT_ENABLE_SLOT_PROBE=%BOOT_SLOT_PROBE%
 if errorlevel 1 exit /b 1
 
 echo [make] building...
