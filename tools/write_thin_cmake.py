@@ -9,7 +9,6 @@ set(LIB_SRC
     ${CMAKE_CURRENT_LIST_DIR}/croutine.c
     ${CMAKE_CURRENT_LIST_DIR}/event_groups.c
     ${CMAKE_CURRENT_LIST_DIR}/list.c
-    ${CMAKE_CURRENT_LIST_DIR}/os_entry.c
     ${CMAKE_CURRENT_LIST_DIR}/pthread.c
     ${CMAKE_CURRENT_LIST_DIR}/queue.c
     ${CMAKE_CURRENT_LIST_DIR}/stream_buffer.c
@@ -18,9 +17,6 @@ set(LIB_SRC
     ${CMAKE_CURRENT_LIST_DIR}/portable/heap_4.c
     ${CMAKE_CURRENT_LIST_DIR}/portable/port.c
     ${CMAKE_CURRENT_LIST_DIR}/portable/portasm.S
-    ${CMAKE_CURRENT_LIST_DIR}/kernel/devices.cpp
-    ${CMAKE_CURRENT_LIST_DIR}/kernel/driver_impl.cpp
-    ${CMAKE_CURRENT_LIST_DIR}/kernel/storage/filesystem.cpp
 )
 set(LIB_INC ${CMAKE_CURRENT_LIST_DIR}/include ${CMAKE_CURRENT_LIST_DIR}/conf ${CMAKE_CURRENT_LIST_DIR}/portable)
 set(ASSEMBLY_FILES ${CMAKE_CURRENT_LIST_DIR}/portable/portasm.S)
@@ -32,7 +28,7 @@ target_link_libraries(freertos PRIVATE hal PRIVATE fatfs)
 target_include_directories(freertos PUBLIC ${LIB_INC})
 '''
 
-DRIVERS = r'''# thin boot drivers subset: only SD card driver
+DRIVERS = r'''# thin boot drivers subset: only SD card driver source is kept for later update-mode work.
 set(LIB_SRC
     ${CMAKE_CURRENT_LIST_DIR}/src/storage/sdcard.cpp
 )
@@ -43,7 +39,7 @@ target_link_libraries(drivers freertos)
 target_include_directories(drivers PUBLIC ${CMAKE_CURRENT_LIST_DIR}/include)
 '''
 
-BSP = r'''# thin boot bsp subset: boot, UART log, SD/SPI/FPIOA/GPIOHS/timer/wdt basics
+BSP = r'''# thin boot bsp subset: no SDK os_entry device auto-install before boot decision
 set(LIB_SRC
     ${CMAKE_CURRENT_LIST_DIR}/config/pin_cfg.c
     ${CMAKE_CURRENT_LIST_DIR}/device/dmac.cpp
@@ -103,7 +99,6 @@ extern driver &g_timer_driver_timer11;
 extern driver &g_wdt_driver_wdt0;
 extern driver &g_wdt_driver_wdt1;
 
-/* HAL/DMA */
 extern driver &g_pic_driver_plic0;
 extern driver &g_dmac_driver_dmac0;
 extern driver &g_dma_driver_dma0;
@@ -156,8 +151,63 @@ driver_registry_t sys::g_dma_drivers[] = {
 };
 '''
 
+ENTRY_USER = r'''/* Thin boot entry: call main() directly, do not auto-start FreeRTOS/os_entry.
+ * This keeps the boot decision before UART/SD/FreeRTOS/device-layer runtime.
+ */
+#include <fpioa.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sysctl.h>
+#include <uarths.h>
+#include "pin_cfg_priv.h"
+
+#define PLL1_OUTPUT_FREQ 160000000UL
+#define PLL2_OUTPUT_FREQ 45158400UL
+
+extern unsigned char __bss_start[];
+extern unsigned char __bss_end[];
+extern int main(void);
+extern void __libc_init_array(void);
+extern void __libc_fini_array(void);
+
+static void setup_clocks(void)
+{
+    sysctl_pll_set_freq(SYSCTL_PLL1, PLL1_OUTPUT_FREQ);
+    sysctl_pll_set_freq(SYSCTL_PLL2, PLL2_OUTPUT_FREQ);
+}
+
+static void init_bss(void)
+{
+    memset(__bss_start, 0, __bss_end - __bss_start);
+}
+
+void _init_bsp(int core_id, int number_of_cores)
+{
+    (void)number_of_cores;
+
+    if (core_id != 0) {
+        for (;;)
+            __asm__ volatile("wfi");
+    }
+
+    init_bss();
+    atexit(__libc_fini_array);
+    __libc_init_array();
+    fpioa_init();
+    bsp_pin_setup();
+    setup_clocks();
+    uarths_init();
+
+    (void)main();
+
+    for (;;)
+        __asm__ volatile("wfi");
+}
+'''
+
 (ROOT / "lib" / "freertos" / "CMakeLists.txt").write_text(FREERTOS, encoding="utf-8", newline="\n")
 (ROOT / "lib" / "drivers" / "CMakeLists.txt").write_text(DRIVERS, encoding="utf-8", newline="\n")
 (ROOT / "lib" / "bsp" / "CMakeLists.txt").write_text(BSP, encoding="utf-8", newline="\n")
 (ROOT / "lib" / "bsp" / "device" / "registry.cpp").write_text(REGISTRY, encoding="utf-8", newline="\n")
-print("THIN_BOOT_CMAKE_OK no_lwip=1 no_esp_flasher=1 no_pwm_dvp_i2s=1 asm_language_c=1 thin_registry=1")
+(ROOT / "lib" / "bsp" / "entry_user.c").write_text(ENTRY_USER, encoding="utf-8", newline="\n")
+print("THIN_BOOT_CMAKE_OK no_lwip=1 no_esp_flasher=1 no_pwm_dvp_i2s=1 asm_language_c=1 thin_registry=1 direct_entry=1")
