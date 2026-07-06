@@ -21,11 +21,12 @@
  *   sysctl SPI3 clock = source / ((threshold + 1) * 2)
  *   DW SPI SCK        = SPI3 clock / baudr
  * Old code selected IN0=26 MHz, threshold=1, baudr=2 => ~3.25 MHz SCK.
- * Use PLL0 with a conservative divider.  On the usual 780 MHz PLL0 this gives
- * SPI3 clock ~78 MHz and SCK ~39 MHz, still below common flash limits but much
- * faster than the ROM-safe IN0 setup. */
+ * PLL0=780 MHz, threshold=2, baudr=2 gives SPI3 clock ~130 MHz and
+ * single-lane SCK ~65 MHz.  The previous 39 MHz setting already reached the
+ * theoretical 1-bit read ceiling, so further speed needs either more SCK or a
+ * dual/quad read command. */
 #define SPI3_CLK_SELECT_PLL0 1u
-#define SPI3_CLK_THRESHOLD   4u
+#define SPI3_CLK_THRESHOLD   2u
 #define SPI3_BAUDR           2u
 
 #define SPI3_SR_BUSY        0x01u
