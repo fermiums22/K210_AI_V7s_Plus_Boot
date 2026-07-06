@@ -9,11 +9,11 @@ set "PYTHONIOENCODING=utf-8"
 set "PORT=%~1"
 if "%PORT%"=="" set "PORT=COM8"
 set "BAUD=%~2"
-if "%BAUD%"=="" set "BAUD=921600"
+if "%BAUD%"=="" set "BAUD=115200"
 set "SECONDS=%~3"
 if "%SECONDS%"=="" set "SECONDS=15"
 
-echo === K210 boot monitor ===
+echo === K210 boot/app monitor ===
 echo Repo: %CD%
 echo Port: %PORT%
 echo Baud: %BAUD%
