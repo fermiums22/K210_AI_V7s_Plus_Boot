@@ -1,15 +1,17 @@
 #include "boot_flash.h"
 #include "log.h"
 
-#include <dmac.h>
 #include <platform.h>
 #include <spi.h>
 #include <stdint.h>
 #include <string.h>
 #include <sysctl.h>
 
+#ifndef DMAC_BASE_ADDR
+#define DMAC_BASE_ADDR       0x50000000UL
+#endif
+
 #define SPI3_CS_MASK          0x01u
-#define SPI3_READ_CMD         0x0bu
 #define SPI3_QUAD_READ_CMD    0x6bu
 #define SPI3_JEDEC_ID_CMD     0x9fu
 #define SPI3_READ_SR1_CMD     0x05u
@@ -46,9 +48,6 @@
 #define SPI3_INST_L_OFF      8u
 #define SPI3_WAIT_CYCLES_OFF 11u
 
-#define SPI_TMOD_FULL_DUPLEX 0u
-#define SPI_TMOD_TX_ONLY     1u
-#define SPI_TMOD_RX_ONLY     2u
 #define SPI_TMOD_EEPROM_READ 3u
 
 #define SPI_CTRL_FRAME_STD   (0u << SPI3_FRF_OFF)
@@ -61,7 +60,43 @@
 #define SPI3_INST_L_8BIT        2u
 #define SPI3_QUAD_DUMMY_CYCLES  8u
 
-#define SPI3_DMA_RX_CH          DMAC_CHANNEL0
+/* DW_ahb_dmac register layout, minimal channel-0 RX path. */
+#define BOOT_DMAC_CH               0u
+#define BOOT_DMAC_CH_MASK          (1u << BOOT_DMAC_CH)
+#define BOOT_DMAC_CH_WE            (1u << (BOOT_DMAC_CH + 8u))
+#define BOOT_DMAC_CH_OFF           (0x58u * BOOT_DMAC_CH)
+#define BOOT_DMAC_REG64(off)       (*(volatile uint64_t *)((uintptr_t)DMAC_BASE_ADDR + (off)))
+#define BOOT_DMAC_SAR              BOOT_DMAC_REG64(BOOT_DMAC_CH_OFF + 0x00u)
+#define BOOT_DMAC_DAR              BOOT_DMAC_REG64(BOOT_DMAC_CH_OFF + 0x08u)
+#define BOOT_DMAC_LLP              BOOT_DMAC_REG64(BOOT_DMAC_CH_OFF + 0x10u)
+#define BOOT_DMAC_CTL              BOOT_DMAC_REG64(BOOT_DMAC_CH_OFF + 0x18u)
+#define BOOT_DMAC_CFG              BOOT_DMAC_REG64(BOOT_DMAC_CH_OFF + 0x40u)
+#define BOOT_DMAC_STATUS_TFR       BOOT_DMAC_REG64(0x2e8u)
+#define BOOT_DMAC_STATUS_ERR       BOOT_DMAC_REG64(0x308u)
+#define BOOT_DMAC_CLEAR_TFR        BOOT_DMAC_REG64(0x338u)
+#define BOOT_DMAC_CLEAR_BLOCK      BOOT_DMAC_REG64(0x340u)
+#define BOOT_DMAC_CLEAR_SRC_TRAN   BOOT_DMAC_REG64(0x348u)
+#define BOOT_DMAC_CLEAR_DST_TRAN   BOOT_DMAC_REG64(0x350u)
+#define BOOT_DMAC_CLEAR_ERR        BOOT_DMAC_REG64(0x358u)
+#define BOOT_DMAC_CFG_REG          BOOT_DMAC_REG64(0x398u)
+#define BOOT_DMAC_CHEN             BOOT_DMAC_REG64(0x3a0u)
+
+#define BOOT_DMAC_WIDTH_8          0u
+#define BOOT_DMAC_INC              0u
+#define BOOT_DMAC_NOCHANGE         2u
+#define BOOT_DMAC_MSIZE_16         3u
+#define BOOT_DMAC_TT_FC_P2M        2u
+
+#define BOOT_DMAC_CTL_INT_EN       (1ull << 0)
+#define BOOT_DMAC_CTL_DST_WIDTH(v) ((uint64_t)(v) << 1)
+#define BOOT_DMAC_CTL_SRC_WIDTH(v) ((uint64_t)(v) << 4)
+#define BOOT_DMAC_CTL_DINC(v)      ((uint64_t)(v) << 7)
+#define BOOT_DMAC_CTL_SINC(v)      ((uint64_t)(v) << 9)
+#define BOOT_DMAC_CTL_DST_MSIZE(v) ((uint64_t)(v) << 11)
+#define BOOT_DMAC_CTL_SRC_MSIZE(v) ((uint64_t)(v) << 14)
+#define BOOT_DMAC_CTL_TT_FC(v)     ((uint64_t)(v) << 20)
+#define BOOT_DMAC_CTL_BLOCK_TS(v)  ((uint64_t)((v) - 1u) << 32)
+
 #define SPI3_DMA_SELECT_RX      (SYSCTL_DMA_SELECT_SSI0_RX_REQ + 3u * 2u)
 
 static volatile spi_t *const SPI3 = (volatile spi_t *)SPI3_BASE_ADDR;
@@ -99,9 +134,56 @@ static void spi3_dma_init_once(void)
 {
     if (spi3_dma_init_done)
         return;
-    dmac_init();
-    sysctl_dma_select((sysctl_dma_channel_t)SPI3_DMA_RX_CH, SPI3_DMA_SELECT_RX);
+    sysctl_clock_enable(SYSCTL_CLOCK_DMA);
+    BOOT_DMAC_CFG_REG = 1;
+    BOOT_DMAC_CHEN = BOOT_DMAC_CH_WE;
+    BOOT_DMAC_CLEAR_TFR = BOOT_DMAC_CH_MASK;
+    BOOT_DMAC_CLEAR_BLOCK = BOOT_DMAC_CH_MASK;
+    BOOT_DMAC_CLEAR_SRC_TRAN = BOOT_DMAC_CH_MASK;
+    BOOT_DMAC_CLEAR_DST_TRAN = BOOT_DMAC_CH_MASK;
+    BOOT_DMAC_CLEAR_ERR = BOOT_DMAC_CH_MASK;
+    sysctl_dma_select((sysctl_dma_channel_t)BOOT_DMAC_CH, SPI3_DMA_SELECT_RX);
     spi3_dma_init_done = 1;
+}
+
+static void spi3_dma_start_rx(uint8_t *dst, uint32_t len)
+{
+    BOOT_DMAC_CHEN = BOOT_DMAC_CH_WE;
+    BOOT_DMAC_CLEAR_TFR = BOOT_DMAC_CH_MASK;
+    BOOT_DMAC_CLEAR_BLOCK = BOOT_DMAC_CH_MASK;
+    BOOT_DMAC_CLEAR_SRC_TRAN = BOOT_DMAC_CH_MASK;
+    BOOT_DMAC_CLEAR_DST_TRAN = BOOT_DMAC_CH_MASK;
+    BOOT_DMAC_CLEAR_ERR = BOOT_DMAC_CH_MASK;
+
+    BOOT_DMAC_SAR = (uint64_t)(uintptr_t)&SPI3->dr[0];
+    BOOT_DMAC_DAR = (uint64_t)(uintptr_t)dst;
+    BOOT_DMAC_LLP = 0;
+    BOOT_DMAC_CFG = 0;
+    BOOT_DMAC_CTL = BOOT_DMAC_CTL_INT_EN |
+                    BOOT_DMAC_CTL_DST_WIDTH(BOOT_DMAC_WIDTH_8) |
+                    BOOT_DMAC_CTL_SRC_WIDTH(BOOT_DMAC_WIDTH_8) |
+                    BOOT_DMAC_CTL_DINC(BOOT_DMAC_INC) |
+                    BOOT_DMAC_CTL_SINC(BOOT_DMAC_NOCHANGE) |
+                    BOOT_DMAC_CTL_DST_MSIZE(BOOT_DMAC_MSIZE_16) |
+                    BOOT_DMAC_CTL_SRC_MSIZE(BOOT_DMAC_MSIZE_16) |
+                    BOOT_DMAC_CTL_TT_FC(BOOT_DMAC_TT_FC_P2M) |
+                    BOOT_DMAC_CTL_BLOCK_TS(len);
+    BOOT_DMAC_CHEN = BOOT_DMAC_CH_WE | BOOT_DMAC_CH_MASK;
+}
+
+static int spi3_dma_wait_done(void)
+{
+    for (uint32_t n = 0; n < SPI3_DMA_TIMEOUT; ++n) {
+        if (BOOT_DMAC_STATUS_ERR & BOOT_DMAC_CH_MASK) {
+            BOOT_DMAC_CLEAR_ERR = BOOT_DMAC_CH_MASK;
+            return -2;
+        }
+        if (BOOT_DMAC_STATUS_TFR & BOOT_DMAC_CH_MASK) {
+            BOOT_DMAC_CLEAR_TFR = BOOT_DMAC_CH_MASK;
+            return 0;
+        }
+    }
+    return -1;
 }
 
 static void boot_flash_spi3_init(void)
@@ -206,6 +288,8 @@ static int spi3_eeprom_read(const uint8_t *cmd, uint32_t cmd_len, uint8_t *rx, u
 
 static int spi3_quad_read_dma_6b(uint32_t addr, uint8_t *rx, uint32_t rx_len)
 {
+    int dma_rc;
+
     if (!rx && rx_len)
         return -1;
     if (rx_len == 0)
@@ -239,34 +323,29 @@ static int spi3_quad_read_dma_6b(uint32_t addr, uint8_t *rx, uint32_t rx_len)
     }
     SPI3->dr[0] = addr & 0x00ffffffu;
 
-    dmac_set_single_mode(SPI3_DMA_RX_CH,
-                         (const void *)&SPI3->dr[0],
-                         rx,
-                         DMAC_ADDR_NOCHANGE,
-                         DMAC_ADDR_INCREMENT,
-                         DMAC_MSIZE_4,
-                         DMAC_TRANS_WIDTH_8,
-                         rx_len);
-
+    spi3_dma_start_rx(rx, rx_len);
     SPI3->ser = SPI3_CS_MASK;
 
-    for (uint32_t n = 0; n < SPI3_DMA_TIMEOUT; ++n) {
-        if (dmac_is_done(SPI3_DMA_RX_CH)) {
-            dmac_wait_done(SPI3_DMA_RX_CH);
-            spi3_deassert();
-            return 0;
-        }
+    dma_rc = spi3_dma_wait_done();
+    if (dma_rc == 0) {
+        spi3_deassert();
+        return 0;
     }
 
     {
         uint32_t sr = SPI3->sr;
         uint32_t rxflr = SPI3->rxflr;
+        uint64_t status_tfr = BOOT_DMAC_STATUS_TFR;
+        uint64_t status_err = BOOT_DMAC_STATUS_ERR;
         spi3_deassert();
-        LOGF("BOOT_QUAD_DMA_TIMEOUT addr=0x%08lx len=%lu sr=0x%08lx rxflr=%lu",
+        LOGF("BOOT_QUAD_DMA_FAIL rc=%d addr=0x%08lx len=%lu sr=0x%08lx rxflr=%lu tfr=0x%lx err=0x%lx",
+             dma_rc,
              (unsigned long)addr,
              (unsigned long)rx_len,
              (unsigned long)sr,
-             (unsigned long)rxflr);
+             (unsigned long)rxflr,
+             (unsigned long)status_tfr,
+             (unsigned long)status_err);
     }
     return -4;
 }
@@ -329,7 +408,7 @@ static void spi3_log_quad_once(void)
     if (spi3_quad_log_done)
         return;
     spi3_quad_log_done = 1;
-    LOGF("BOOT_QUAD_DIRECT cmd=0x%02x addr_bits=24 dummy=%u chunk=%lu dma=byte-stream sck=65MHz",
+    LOGF("BOOT_QUAD_DIRECT cmd=0x%02x addr_bits=24 dummy=%u chunk=%lu dma=byte-stream msize=16 sck=65MHz",
          (unsigned)SPI3_QUAD_READ_CMD,
          (unsigned)SPI3_QUAD_DUMMY_CYCLES,
          (unsigned long)SPI3_QUAD_READ_CHUNK);
