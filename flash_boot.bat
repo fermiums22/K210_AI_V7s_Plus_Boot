@@ -9,6 +9,8 @@ set "PYTHONIOENCODING=utf-8"
 set "PORT=%~1"
 if "%PORT%"=="" set "PORT=COM8"
 set "NO_BUILD=0"
+set "NO_MONITOR=0"
+set "MONITOR_SECONDS=15"
 set "KFLASH_BAUD=1500000"
 shift /1
 
@@ -16,6 +18,17 @@ shift /1
 if "%~1"=="" goto args_done
 if /I "%~1"=="--no-build" (
   set "NO_BUILD=1"
+  shift /1
+  goto parse_args
+)
+if /I "%~1"=="--no-monitor" (
+  set "NO_MONITOR=1"
+  shift /1
+  goto parse_args
+)
+if /I "%~1"=="--monitor-seconds" (
+  set "MONITOR_SECONDS=%~2"
+  shift /1
   shift /1
   goto parse_args
 )
@@ -62,4 +75,11 @@ if errorlevel 1 exit /b 1
 
 echo.
 echo OK: K210 boot flashed.
+
+if "%NO_MONITOR%"=="0" (
+  echo.
+  echo === K210 boot auto-monitor ===
+  call monitor_boot.bat %PORT% 921600 %MONITOR_SECONDS%
+)
+
 exit /b 0
