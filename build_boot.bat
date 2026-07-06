@@ -11,7 +11,7 @@ if "%TC%"=="" if exist "C:\K210\toolchain\kendryte-toolchain\bin\riscv64-unknown
 if "%TC%"=="" set "TC=C:\K210\toolchain\kendryte-toolchain\bin"
 
 set "BOOT_SLOT_PROBE=%BOOT_SLOT_PROBE%"
-if "%BOOT_SLOT_PROBE%"=="" set "BOOT_SLOT_PROBE=0"
+if "%BOOT_SLOT_PROBE%"=="" set "BOOT_SLOT_PROBE=1"
 
 set "BUILD=%CD%\build"
 set "MAKE=%TC%\mingw32-make.exe"
