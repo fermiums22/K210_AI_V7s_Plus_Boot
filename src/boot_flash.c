@@ -125,5 +125,5 @@ int boot_flash_load_app_image(const boot_app_header_t *hdr)
 {
     if (!hdr)
         return -1;
-    return boot_flash_read(APP_SLOT0_FLASH_OFFSET, (void *)hdr->load_addr, hdr->image_size);
+    return boot_flash_read(APP_SLOT0_FLASH_OFFSET, (void *)(uintptr_t)hdr->load_addr, hdr->image_size);
 }
