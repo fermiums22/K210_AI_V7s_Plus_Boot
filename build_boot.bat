@@ -12,6 +12,8 @@ if "%TC%"=="" set "TC=C:\K210\toolchain\kendryte-toolchain\bin"
 
 set "BOOT_SLOT_PROBE=%BOOT_SLOT_PROBE%"
 if "%BOOT_SLOT_PROBE%"=="" set "BOOT_SLOT_PROBE=1"
+set "BOOT_BUILD_COLOR=%BOOT_BUILD_COLOR%"
+if "%BOOT_BUILD_COLOR%"=="" set "BOOT_BUILD_COLOR=1"
 
 set "BUILD=%CD%\build"
 set "MAKE=%TC%\mingw32-make.exe"
@@ -23,6 +25,7 @@ echo TC:    %TC%
 echo MAKE:  %MAKE%
 echo BUILD: %BUILD%
 echo Slot probe: %BOOT_SLOT_PROBE%
+echo Build color: %BOOT_BUILD_COLOR%
 echo.
 
 if not exist "%TC%" (
@@ -46,11 +49,19 @@ if not exist "lib\hal" (
 if not exist "%BUILD%" mkdir "%BUILD%"
 
 echo [cmake] configuring...
-cmake -S . -B "%BUILD%" -G "MinGW Makefiles" -DCMAKE_MAKE_PROGRAM="%MAKE%" -DTOOLCHAIN="%TC%" -DSDK_ROOT="%SDK%" -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DBOOT_ENABLE_SLOT_PROBE=%BOOT_SLOT_PROBE%
+if "%BOOT_BUILD_COLOR%"=="1" (
+  py -3 tools\run_color_build.py -- cmake -S . -B "%BUILD%" -G "MinGW Makefiles" -DCMAKE_MAKE_PROGRAM="%MAKE%" -DTOOLCHAIN="%TC%" -DSDK_ROOT="%SDK%" -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DBOOT_ENABLE_SLOT_PROBE=%BOOT_SLOT_PROBE%
+) else (
+  cmake -S . -B "%BUILD%" -G "MinGW Makefiles" -DCMAKE_MAKE_PROGRAM="%MAKE%" -DTOOLCHAIN="%TC%" -DSDK_ROOT="%SDK%" -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DBOOT_ENABLE_SLOT_PROBE=%BOOT_SLOT_PROBE%
+)
 if errorlevel 1 exit /b 1
 
 echo [make] building...
-"%MAKE%" -C "%BUILD%" -j4
+if "%BOOT_BUILD_COLOR%"=="1" (
+  py -3 tools\run_color_build.py -- "%MAKE%" -C "%BUILD%" -j4
+) else (
+  "%MAKE%" -C "%BUILD%" -j4
+)
 if errorlevel 1 exit /b 1
 
 if not exist "%BUILD%\k210_boot.bin" (
