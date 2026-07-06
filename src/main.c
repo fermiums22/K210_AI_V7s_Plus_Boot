@@ -8,16 +8,22 @@ extern void boot_irq_off(void);
 extern void boot_jump_to_app(uintptr_t entry);
 void boot_runtime_start(uint32_t reason);
 
+#ifndef BOOT_ENABLE_SLOT_PROBE
+#define BOOT_ENABLE_SLOT_PROBE 0
+#endif
+
 int main(void)
 {
     boot_irq_off();
 
-    /* Temporary early diagnostics: if flash probing hangs before boot runtime,
-     * we still get a marker and know the USB-UART path is alive. Remove this
-     * once SPI flash slot loading is stable. */
+    /* Keep the bootloader recoverable while the SPI3 flash slot driver is under
+     * bring-up.  With BOOT_ENABLE_SLOT_PROBE=0 the boot always enters runtime
+     * mode and never hangs before the console is available.  Enable the define
+     * only for targeted slot-load debugging. */
     log_init();
     LOG("BOOT_PRE_DECISION");
 
+#if BOOT_ENABLE_SLOT_PROBE
     uint32_t reason = boot_decision_get_reason();
     LOGF("BOOT_POST_DECISION reason=0x%08lx hdr_rc=%d magic=0x%08lx",
          (unsigned long)reason,
@@ -40,6 +46,11 @@ int main(void)
                 ;
         }
     }
+#else
+    uint32_t reason = BOOT_REASON_APP_INVALID;
+    boot_decision_app_header_read_rc = -1000;
+    LOG("BOOT_SLOT_PROBE_DISABLED");
+#endif
 
     boot_runtime_start(reason);
 
