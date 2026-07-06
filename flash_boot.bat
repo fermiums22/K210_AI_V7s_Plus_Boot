@@ -12,6 +12,7 @@ set "NO_BUILD=0"
 set "NO_MONITOR=0"
 set "MONITOR_SECONDS=15"
 set "KFLASH_BAUD=1500000"
+set "MONITOR_BAUD=115200"
 shift /1
 
 :parse_args
@@ -28,6 +29,12 @@ if /I "%~1"=="--no-monitor" (
 )
 if /I "%~1"=="--monitor-seconds" (
   set "MONITOR_SECONDS=%~2"
+  shift /1
+  shift /1
+  goto parse_args
+)
+if /I "%~1"=="--monitor-baud" (
+  set "MONITOR_BAUD=%~2"
   shift /1
   shift /1
   goto parse_args
@@ -79,7 +86,7 @@ echo OK: K210 boot flashed.
 if "%NO_MONITOR%"=="0" (
   echo.
   echo === K210 boot auto-monitor ===
-  call monitor_boot.bat %PORT% 921600 %MONITOR_SECONDS%
+  call monitor_boot.bat %PORT% %MONITOR_BAUD% %MONITOR_SECONDS%
 )
 
 exit /b 0
