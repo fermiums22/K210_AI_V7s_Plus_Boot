@@ -1,6 +1,8 @@
 #include <FreeRTOS.h>
 #include <task.h>
 #include <stdint.h>
+#include <clint.h>
+#include <encoding.h>
 
 #include "boot_config.h"
 #include "boot_decision.h"
@@ -9,6 +11,13 @@
 static uint32_t g_boot_reason;
 static StaticTask_t s_idle_task;
 static StackType_t s_idle_task_stack[configMINIMAL_STACK_SIZE];
+
+static void boot_prepare_freertos_runtime(void)
+{
+    clear_csr(mie, MIP_MTIP);
+    clint_ipi_enable();
+    set_csr(mstatus, MSTATUS_MIE);
+}
 
 static void boot_task(void *arg)
 {
@@ -68,6 +77,8 @@ void boot_runtime_start(uint32_t reason)
          (unsigned long)boot_decision_app_header.load_addr,
          (unsigned long)boot_decision_app_header.entry_addr,
          (unsigned long)boot_decision_app_header.image_size);
+
+    boot_prepare_freertos_runtime();
 
     if (xTaskCreate(boot_task, "boot", 4096, NULL, tskIDLE_PRIORITY + 2, NULL) != pdPASS)
         boot_halt_no_scheduler("BOOT_TASK_CREATE_FAIL");
