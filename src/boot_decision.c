@@ -22,18 +22,12 @@ int boot_decision_app_request(void)
 
 int boot_decision_app_valid(void)
 {
-    const boot_app_header_t *h = (const boot_app_header_t *)APP_LOAD_ADDR;
-    if (h->magic != APP_HDR_MAGIC || h->magic_inv != APP_HDR_MAGIC_INV)
-        return 0;
-    if (h->load_addr != APP_LOAD_ADDR)
-        return 0;
-    if (h->entry_addr < APP_LOAD_ADDR || h->entry_addr >= BOOT_RAM_END)
-        return 0;
-    if (h->image_size == 0 || h->image_size > APP_MAX_SIZE)
-        return 0;
-    if ((h->load_addr + h->image_size) > BOOT_RAM_END)
-        return 0;
-    return 1;
+    /* Do not trust SRAM at APP_LOAD_ADDR after reset.  SRAM can contain stale
+     * data from the previous run or from the ISP stub.  Until the bootloader
+     * can read and verify a persistent flash slot header, the application is
+     * intentionally considered invalid and we stay in boot mode.
+     */
+    return 0;
 }
 
 uint32_t boot_decision_get_reason(void)
