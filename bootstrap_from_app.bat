@@ -30,10 +30,16 @@ copy /Y "%SRC%\src\pinout.h" "src\pinout.h" >nul
 copy /Y "%SRC%\src\log.c" "src\log.c" >nul
 copy /Y "%SRC%\src\log.h" "src\log.h" >nul
 
+py -3 -c "from pathlib import Path; p=Path('src/log.h'); s=p.read_text(); s=s.replace('#define APP_LOG_BAUD 921600u', '#define APP_LOG_BAUD 115200u'); p.write_text(s)"
+if errorlevel 1 (
+  echo ERROR: boot log baud patch failed
+  exit /b 4
+)
+
 py -3 tools\write_thin_cmake.py
 if errorlevel 1 (
   echo ERROR: thin boot CMake patch failed
-  exit /b 4
+  exit /b 5
 )
 
 echo.
