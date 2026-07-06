@@ -10,6 +10,7 @@
 #define SPI3_READ_CMD       0x03u
 #define SPI3_RX_DUMMY       0x00u
 #define SPI3_READ_CHUNK     256u
+#define SPI3_TIMEOUT        1000000u
 
 #define SPI3_MOD_OFF        8u
 #define SPI3_DFS_OFF        0u
@@ -39,14 +40,33 @@ static void boot_flash_spi3_init(void)
     (void)SPI3->icr;
 }
 
-static uint8_t spi3_xfer8(uint8_t tx)
+static int spi3_wait_mask(uint32_t mask, uint32_t value)
 {
-    while ((SPI3->sr & 0x02u) == 0)
-        ;
+    for (uint32_t n = 0; n < SPI3_TIMEOUT; ++n) {
+        if ((SPI3->sr & mask) == value)
+            return 0;
+    }
+    return -1;
+}
+
+static int spi3_xfer8(uint8_t tx, uint8_t *rx)
+{
+    if (spi3_wait_mask(0x02u, 0x02u) != 0)
+        return -1;
     SPI3->dr[0] = tx;
-    while ((SPI3->sr & 0x08u) == 0)
-        ;
-    return (uint8_t)SPI3->dr[0];
+    if (spi3_wait_mask(0x08u, 0x08u) != 0)
+        return -2;
+    if (rx)
+        *rx = (uint8_t)SPI3->dr[0];
+    else
+        (void)SPI3->dr[0];
+    return 0;
+}
+
+static void spi3_deassert(void)
+{
+    SPI3->ser = 0;
+    SPI3->ssienr = 0;
 }
 
 int boot_flash_read(uint32_t flash_offset, void *dst, uint32_t len)
@@ -64,18 +84,26 @@ int boot_flash_read(uint32_t flash_offset, void *dst, uint32_t len)
         SPI3->ssienr = 1;
         SPI3->ser = SPI3_CS_MASK;
 
-        (void)spi3_xfer8(SPI3_READ_CMD);
-        (void)spi3_xfer8((uint8_t)(addr >> 16));
-        (void)spi3_xfer8((uint8_t)(addr >> 8));
-        (void)spi3_xfer8((uint8_t)(addr >> 0));
+        if (spi3_xfer8(SPI3_READ_CMD, 0) != 0 ||
+            spi3_xfer8((uint8_t)(addr >> 16), 0) != 0 ||
+            spi3_xfer8((uint8_t)(addr >> 8), 0) != 0 ||
+            spi3_xfer8((uint8_t)(addr >> 0), 0) != 0) {
+            spi3_deassert();
+            return -2;
+        }
 
-        for (uint32_t i = 0; i < chunk; ++i)
-            out[i] = spi3_xfer8(SPI3_RX_DUMMY);
+        for (uint32_t i = 0; i < chunk; ++i) {
+            if (spi3_xfer8(SPI3_RX_DUMMY, &out[i]) != 0) {
+                spi3_deassert();
+                return -3;
+            }
+        }
 
-        while ((SPI3->sr & 0x01u) != 0)
-            ;
-        SPI3->ser = 0;
-        SPI3->ssienr = 0;
+        if (spi3_wait_mask(0x01u, 0x00u) != 0) {
+            spi3_deassert();
+            return -4;
+        }
+        spi3_deassert();
 
         out += chunk;
         flash_offset += chunk;
