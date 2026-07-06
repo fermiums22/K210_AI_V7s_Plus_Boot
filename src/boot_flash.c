@@ -15,6 +15,7 @@
 #define SPI3_LOAD_LOG_STEP  (1024u * 1024u)
 #define SPI3_TIMEOUT        50000u
 #define SPI3_FLUSH_LIMIT    128u
+#define BOOT_CYCLE_HZ       390000000ull
 
 #define SPI3_SR_BUSY        0x01u
 #define SPI3_SR_TFNF        0x02u
@@ -36,6 +37,13 @@
 #define SPI_CTRL_DFS8        (7u << SPI3_DFS_OFF)
 
 static volatile spi_t *const SPI3 = (volatile spi_t *)SPI3_BASE_ADDR;
+
+static uint64_t boot_cycle_read(void)
+{
+    uint64_t v;
+    __asm__ volatile("rdcycle %0" : "=r"(v));
+    return v;
+}
 
 static void spi3_flush_rx_bounded(void)
 {
@@ -193,6 +201,11 @@ int boot_flash_load_app_image(const boot_app_header_t *hdr)
 {
     uint32_t done = 0;
     uint32_t next_log = SPI3_LOAD_LOG_STEP;
+    uint64_t t0;
+    uint64_t t1;
+    uint64_t dt_cycles;
+    uint64_t ms;
+    uint64_t kib_s;
 
     if (!hdr)
         return -1;
@@ -201,6 +214,8 @@ int boot_flash_load_app_image(const boot_app_header_t *hdr)
          (unsigned long)APP_SLOT0_FLASH_OFFSET,
          (unsigned long)hdr->load_addr,
          (unsigned long)hdr->image_size);
+
+    t0 = boot_cycle_read();
 
     while (done < hdr->image_size) {
         uint32_t left = hdr->image_size - done;
@@ -225,6 +240,16 @@ int boot_flash_load_app_image(const boot_app_header_t *hdr)
         }
     }
 
-    LOG("BOOT_LOAD_DONE");
+    t1 = boot_cycle_read();
+    dt_cycles = t1 - t0;
+    ms = (dt_cycles * 1000ull) / BOOT_CYCLE_HZ;
+    if (ms == 0)
+        ms = 1;
+    kib_s = (((uint64_t)hdr->image_size / 1024ull) * 1000ull) / ms;
+
+    LOGF("BOOT_LOAD_DONE bytes=%lu ms=%lu KiB/s=%lu",
+         (unsigned long)hdr->image_size,
+         (unsigned long)ms,
+         (unsigned long)kib_s);
     return 0;
 }
