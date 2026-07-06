@@ -8,11 +8,14 @@ set "PORT=%~1"
 if "%PORT%"=="" set "PORT=COM8"
 set "BAUD=%~2"
 if "%BAUD%"=="" set "BAUD=921600"
+set "SECONDS=%~3"
+if "%SECONDS%"=="" set "SECONDS=15"
 
 echo === K210 boot monitor ===
 echo Port: %PORT%
 echo Baud: %BAUD%
-echo Ctrl+C to stop.
+echo Time: %SECONDS%s
 echo.
 
-py -3 -c "import sys, serial; p=sys.argv[1]; b=int(sys.argv[2]); s=serial.Serial(p,b,timeout=None); print('monitor open',p,b); [print(s.readline().decode('utf-8','replace').rstrip()) for _ in iter(int,1)]" %PORT% %BAUD%
+py -3 tools\boot_monitor.py --port %PORT% --baud %BAUD% --seconds %SECONDS%
+exit /b %ERRORLEVEL%
