@@ -1,6 +1,7 @@
 #include "boot_flash.h"
 #include "log.h"
 
+#include <dmac.h>
 #include <platform.h>
 #include <spi.h>
 #include <stdint.h>
@@ -60,44 +61,42 @@
 #define SPI3_INST_L_8BIT        2u
 #define SPI3_QUAD_DUMMY_CYCLES  8u
 
-/* DW_ahb_dmac register layout, minimal channel-0 RX path. */
+/* K210 DW_ahb_dmac layout.  Unlike the generic DW-DMAC map, channel 0 starts
+ * at DMAC+0x100 and block_ts is a separate register at channel+0x10. */
 #define BOOT_DMAC_CH               0u
-#define BOOT_DMAC_CH_MASK          (1u << BOOT_DMAC_CH)
-#define BOOT_DMAC_CH_WE            (1u << (BOOT_DMAC_CH + 8u))
-#define BOOT_DMAC_CH_OFF           (0x58u * BOOT_DMAC_CH)
-#define BOOT_DMAC_REG64(off)       (*(volatile uint64_t *)((uintptr_t)DMAC_BASE_ADDR + (off)))
-#define BOOT_DMAC_SAR              BOOT_DMAC_REG64(BOOT_DMAC_CH_OFF + 0x00u)
-#define BOOT_DMAC_DAR              BOOT_DMAC_REG64(BOOT_DMAC_CH_OFF + 0x08u)
-#define BOOT_DMAC_LLP              BOOT_DMAC_REG64(BOOT_DMAC_CH_OFF + 0x10u)
-#define BOOT_DMAC_CTL              BOOT_DMAC_REG64(BOOT_DMAC_CH_OFF + 0x18u)
-#define BOOT_DMAC_CFG              BOOT_DMAC_REG64(BOOT_DMAC_CH_OFF + 0x40u)
-#define BOOT_DMAC_STATUS_TFR       BOOT_DMAC_REG64(0x2e8u)
-#define BOOT_DMAC_STATUS_ERR       BOOT_DMAC_REG64(0x308u)
-#define BOOT_DMAC_CLEAR_TFR        BOOT_DMAC_REG64(0x338u)
-#define BOOT_DMAC_CLEAR_BLOCK      BOOT_DMAC_REG64(0x340u)
-#define BOOT_DMAC_CLEAR_SRC_TRAN   BOOT_DMAC_REG64(0x348u)
-#define BOOT_DMAC_CLEAR_DST_TRAN   BOOT_DMAC_REG64(0x350u)
-#define BOOT_DMAC_CLEAR_ERR        BOOT_DMAC_REG64(0x358u)
-#define BOOT_DMAC_CFG_REG          BOOT_DMAC_REG64(0x398u)
-#define BOOT_DMAC_CHEN             BOOT_DMAC_REG64(0x3a0u)
+#define BOOT_DMAC_CH_MASK          (1ull << BOOT_DMAC_CH)
+#define BOOT_DMAC_CH_WE            (1ull << (BOOT_DMAC_CH + 8u))
 
 #define BOOT_DMAC_WIDTH_8          0u
 #define BOOT_DMAC_INC              0u
-#define BOOT_DMAC_NOCHANGE         2u
+#define BOOT_DMAC_NOCHANGE         1u
 #define BOOT_DMAC_MSIZE_16         3u
 #define BOOT_DMAC_TT_FC_P2M        2u
+#define BOOT_DMAC_PRIOR_HI         7u
 
-#define BOOT_DMAC_CTL_INT_EN       (1ull << 0)
-#define BOOT_DMAC_CTL_DST_WIDTH(v) ((uint64_t)(v) << 1)
-#define BOOT_DMAC_CTL_SRC_WIDTH(v) ((uint64_t)(v) << 4)
-#define BOOT_DMAC_CTL_DINC(v)      ((uint64_t)(v) << 7)
-#define BOOT_DMAC_CTL_SINC(v)      ((uint64_t)(v) << 9)
-#define BOOT_DMAC_CTL_DST_MSIZE(v) ((uint64_t)(v) << 11)
+#define BOOT_DMAC_CTL_SMS(v)       ((uint64_t)(v) << 0)
+#define BOOT_DMAC_CTL_DMS(v)       ((uint64_t)(v) << 2)
+#define BOOT_DMAC_CTL_SINC(v)      ((uint64_t)(v) << 4)
+#define BOOT_DMAC_CTL_DINC(v)      ((uint64_t)(v) << 6)
+#define BOOT_DMAC_CTL_SRC_WIDTH(v) ((uint64_t)(v) << 8)
+#define BOOT_DMAC_CTL_DST_WIDTH(v) ((uint64_t)(v) << 11)
 #define BOOT_DMAC_CTL_SRC_MSIZE(v) ((uint64_t)(v) << 14)
-#define BOOT_DMAC_CTL_TT_FC(v)     ((uint64_t)(v) << 20)
-#define BOOT_DMAC_CTL_BLOCK_TS(v)  ((uint64_t)((v) - 1u) << 32)
+#define BOOT_DMAC_CTL_DST_MSIZE(v) ((uint64_t)(v) << 18)
+#define BOOT_DMAC_CTL_IOC_BLK      (1ull << 58)
 
-#define SPI3_DMA_SELECT_RX      (SYSCTL_DMA_SELECT_SSI0_RX_REQ + 3u * 2u)
+#define BOOT_DMAC_CFG_TT_FC(v)     ((uint64_t)(v) << 32)
+#define BOOT_DMAC_CFG_HS_SRC_HW    (0ull << 35)
+#define BOOT_DMAC_CFG_HS_DST_SW    (1ull << 36)
+#define BOOT_DMAC_CFG_SRC_PER(v)   ((uint64_t)(v) << 39)
+#define BOOT_DMAC_CFG_DST_PER(v)   ((uint64_t)(v) << 44)
+#define BOOT_DMAC_CFG_CH_PRI(v)    ((uint64_t)(v) << 49)
+
+#define BOOT_DMAC_INT_BLOCK_DONE   0x01ull
+#define BOOT_DMAC_INT_DMA_DONE     0x02ull
+#define BOOT_DMAC_INT_DONE_MASK    (BOOT_DMAC_INT_BLOCK_DONE | BOOT_DMAC_INT_DMA_DONE)
+#define BOOT_DMAC_INT_ERR_MASK     0x1fe0ull
+
+#define SPI3_DMA_SELECT_RX         SYSCTL_DMA_SELECT_SSI3_RX_REQ
 
 static volatile spi_t *const SPI3 = (volatile spi_t *)SPI3_BASE_ADDR;
 static uint8_t spi3_clock_log_done;
@@ -130,59 +129,83 @@ static int spi3_wait_mask(uint32_t mask, uint32_t value)
     return -1;
 }
 
+static void spi3_dma_clear_ints(void)
+{
+    dmac->channel[BOOT_DMAC_CH].intclear = 0xffffffffull;
+}
+
+static void spi3_dma_disable_channel(void)
+{
+    dmac->chen = BOOT_DMAC_CH_WE;
+}
+
+static void spi3_dma_enable_channel(void)
+{
+    dmac->chen = BOOT_DMAC_CH_WE | BOOT_DMAC_CH_MASK;
+}
+
 static void spi3_dma_init_once(void)
 {
     if (spi3_dma_init_done)
         return;
     sysctl_clock_enable(SYSCTL_CLOCK_DMA);
-    BOOT_DMAC_CFG_REG = 1;
-    BOOT_DMAC_CHEN = BOOT_DMAC_CH_WE;
-    BOOT_DMAC_CLEAR_TFR = BOOT_DMAC_CH_MASK;
-    BOOT_DMAC_CLEAR_BLOCK = BOOT_DMAC_CH_MASK;
-    BOOT_DMAC_CLEAR_SRC_TRAN = BOOT_DMAC_CH_MASK;
-    BOOT_DMAC_CLEAR_DST_TRAN = BOOT_DMAC_CH_MASK;
-    BOOT_DMAC_CLEAR_ERR = BOOT_DMAC_CH_MASK;
+    dmac->cfg = 0x3ull; /* DMAC enable + interrupt/status generation enable. */
+    spi3_dma_disable_channel();
+    spi3_dma_clear_ints();
+    dmac->channel[BOOT_DMAC_CH].intstatus_en = BOOT_DMAC_INT_DONE_MASK | BOOT_DMAC_INT_ERR_MASK;
+    dmac->channel[BOOT_DMAC_CH].intsignal_en = 0;
     sysctl_dma_select((sysctl_dma_channel_t)BOOT_DMAC_CH, SPI3_DMA_SELECT_RX);
     spi3_dma_init_done = 1;
 }
 
 static void spi3_dma_start_rx(uint8_t *dst, uint32_t len)
 {
-    BOOT_DMAC_CHEN = BOOT_DMAC_CH_WE;
-    BOOT_DMAC_CLEAR_TFR = BOOT_DMAC_CH_MASK;
-    BOOT_DMAC_CLEAR_BLOCK = BOOT_DMAC_CH_MASK;
-    BOOT_DMAC_CLEAR_SRC_TRAN = BOOT_DMAC_CH_MASK;
-    BOOT_DMAC_CLEAR_DST_TRAN = BOOT_DMAC_CH_MASK;
-    BOOT_DMAC_CLEAR_ERR = BOOT_DMAC_CH_MASK;
+    spi3_dma_disable_channel();
+    spi3_dma_clear_ints();
 
-    BOOT_DMAC_SAR = (uint64_t)(uintptr_t)&SPI3->dr[0];
-    BOOT_DMAC_DAR = (uint64_t)(uintptr_t)dst;
-    BOOT_DMAC_LLP = 0;
-    BOOT_DMAC_CFG = 0;
-    BOOT_DMAC_CTL = BOOT_DMAC_CTL_INT_EN |
-                    BOOT_DMAC_CTL_DST_WIDTH(BOOT_DMAC_WIDTH_8) |
-                    BOOT_DMAC_CTL_SRC_WIDTH(BOOT_DMAC_WIDTH_8) |
-                    BOOT_DMAC_CTL_DINC(BOOT_DMAC_INC) |
-                    BOOT_DMAC_CTL_SINC(BOOT_DMAC_NOCHANGE) |
-                    BOOT_DMAC_CTL_DST_MSIZE(BOOT_DMAC_MSIZE_16) |
-                    BOOT_DMAC_CTL_SRC_MSIZE(BOOT_DMAC_MSIZE_16) |
-                    BOOT_DMAC_CTL_TT_FC(BOOT_DMAC_TT_FC_P2M) |
-                    BOOT_DMAC_CTL_BLOCK_TS(len);
-    BOOT_DMAC_CHEN = BOOT_DMAC_CH_WE | BOOT_DMAC_CH_MASK;
+    dmac->channel[BOOT_DMAC_CH].cfg =
+        BOOT_DMAC_CFG_TT_FC(BOOT_DMAC_TT_FC_P2M) |
+        BOOT_DMAC_CFG_HS_SRC_HW |
+        BOOT_DMAC_CFG_HS_DST_SW |
+        BOOT_DMAC_CFG_SRC_PER(BOOT_DMAC_CH) |
+        BOOT_DMAC_CFG_DST_PER(BOOT_DMAC_CH) |
+        BOOT_DMAC_CFG_CH_PRI(BOOT_DMAC_PRIOR_HI);
+
+    dmac->channel[BOOT_DMAC_CH].sar = (uint64_t)(uintptr_t)&SPI3->dr[0];
+    dmac->channel[BOOT_DMAC_CH].dar = (uint64_t)(uintptr_t)dst;
+    dmac->channel[BOOT_DMAC_CH].llp = 0;
+    dmac->channel[BOOT_DMAC_CH].block_ts = (uint64_t)len - 1ull;
+    dmac->channel[BOOT_DMAC_CH].ctl =
+        BOOT_DMAC_CTL_SMS(0) |
+        BOOT_DMAC_CTL_DMS(1) |
+        BOOT_DMAC_CTL_SINC(BOOT_DMAC_NOCHANGE) |
+        BOOT_DMAC_CTL_DINC(BOOT_DMAC_INC) |
+        BOOT_DMAC_CTL_SRC_WIDTH(BOOT_DMAC_WIDTH_8) |
+        BOOT_DMAC_CTL_DST_WIDTH(BOOT_DMAC_WIDTH_8) |
+        BOOT_DMAC_CTL_SRC_MSIZE(BOOT_DMAC_MSIZE_16) |
+        BOOT_DMAC_CTL_DST_MSIZE(BOOT_DMAC_MSIZE_16) |
+        BOOT_DMAC_CTL_IOC_BLK;
+
+    (void)dmac->channel[BOOT_DMAC_CH].swhssrc;
+    spi3_dma_enable_channel();
 }
 
 static int spi3_dma_wait_done(void)
 {
     for (uint32_t n = 0; n < SPI3_DMA_TIMEOUT; ++n) {
-        if (BOOT_DMAC_STATUS_ERR & BOOT_DMAC_CH_MASK) {
-            BOOT_DMAC_CLEAR_ERR = BOOT_DMAC_CH_MASK;
+        uint64_t intstatus = dmac->channel[BOOT_DMAC_CH].intstatus;
+        if (intstatus & BOOT_DMAC_INT_ERR_MASK) {
+            spi3_dma_clear_ints();
+            spi3_dma_disable_channel();
             return -2;
         }
-        if (BOOT_DMAC_STATUS_TFR & BOOT_DMAC_CH_MASK) {
-            BOOT_DMAC_CLEAR_TFR = BOOT_DMAC_CH_MASK;
+        if (intstatus & BOOT_DMAC_INT_DONE_MASK) {
+            spi3_dma_clear_ints();
+            spi3_dma_disable_channel();
             return 0;
         }
     }
+    spi3_dma_disable_channel();
     return -1;
 }
 
@@ -335,17 +358,25 @@ static int spi3_quad_read_dma_6b(uint32_t addr, uint8_t *rx, uint32_t rx_len)
     {
         uint32_t sr = SPI3->sr;
         uint32_t rxflr = SPI3->rxflr;
-        uint64_t status_tfr = BOOT_DMAC_STATUS_TFR;
-        uint64_t status_err = BOOT_DMAC_STATUS_ERR;
+        uint64_t ch_intstatus = dmac->channel[BOOT_DMAC_CH].intstatus;
+        uint64_t ch_status = dmac->channel[BOOT_DMAC_CH].status;
+        uint64_t ch_block = dmac->channel[BOOT_DMAC_CH].block_ts;
+        uint64_t ch_ctl = dmac->channel[BOOT_DMAC_CH].ctl;
+        uint64_t ch_cfg = dmac->channel[BOOT_DMAC_CH].cfg;
+        uint64_t chen = dmac->chen;
         spi3_deassert();
-        LOGF("BOOT_QUAD_DMA_FAIL rc=%d addr=0x%08lx len=%lu sr=0x%08lx rxflr=%lu tfr=0x%lx err=0x%lx",
+        LOGF("BOOT_QUAD_DMA_FAIL rc=%d addr=0x%08lx len=%lu sr=0x%08lx rxflr=%lu chint=0x%lx chstat=0x%lx block=0x%lx ctl=0x%lx cfg=0x%lx chen=0x%lx",
              dma_rc,
              (unsigned long)addr,
              (unsigned long)rx_len,
              (unsigned long)sr,
              (unsigned long)rxflr,
-             (unsigned long)status_tfr,
-             (unsigned long)status_err);
+             (unsigned long)ch_intstatus,
+             (unsigned long)ch_status,
+             (unsigned long)ch_block,
+             (unsigned long)ch_ctl,
+             (unsigned long)ch_cfg,
+             (unsigned long)chen);
     }
     return -4;
 }
@@ -408,7 +439,7 @@ static void spi3_log_quad_once(void)
     if (spi3_quad_log_done)
         return;
     spi3_quad_log_done = 1;
-    LOGF("BOOT_QUAD_DIRECT cmd=0x%02x addr_bits=24 dummy=%u chunk=%lu dma=byte-stream msize=16 sck=65MHz",
+    LOGF("BOOT_QUAD_DIRECT cmd=0x%02x addr_bits=24 dummy=%u chunk=%lu dma=k210-direct msize=16 sck=65MHz",
          (unsigned)SPI3_QUAD_READ_CMD,
          (unsigned)SPI3_QUAD_DUMMY_CYCLES,
          (unsigned long)SPI3_QUAD_READ_CHUNK);
