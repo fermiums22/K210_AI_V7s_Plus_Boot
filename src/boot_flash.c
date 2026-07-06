@@ -14,7 +14,7 @@
 #define SPI3_READ_SR1_CMD     0x05u
 #define SPI3_READ_SR2_CMD     0x35u
 #define SPI3_READ_CHUNK       (32u * 1024u)
-#define SPI3_QUAD_READ_CHUNK  (512u)
+#define SPI3_QUAD_READ_CHUNK  (4096u)
 #define SPI3_LOAD_STEP        (256u * 1024u)
 #define SPI3_LOAD_LOG_STEP    (1024u * 1024u)
 #define SPI3_TIMEOUT          50000u
@@ -25,10 +25,9 @@
 /* SPI3 flash clocking:
  *   sysctl SPI3 clock = source / ((threshold + 1) * 2)
  *   DW SPI SCK        = SPI3 clock / baudr
- * Use PLL0 with threshold=9 for a temporary polling-safe quad test:
- * 780 MHz / ((9 + 1) * 2) / 2 = ~19.5 MHz SCK. */
+ * PLL0 threshold=2 gives 780 MHz / ((2 + 1) * 2) / 2 = ~65 MHz SCK. */
 #define SPI3_CLK_SELECT_PLL0 1u
-#define SPI3_CLK_THRESHOLD   9u
+#define SPI3_CLK_THRESHOLD   2u
 #define SPI3_BAUDR           2u
 
 #define SPI3_SR_BUSY        0x01u
@@ -55,13 +54,13 @@
 #define SPI_CTRL_FRAME_QUAD  (2u << SPI3_FRF_OFF)
 #define SPI_CTRL_MODE0       (0u << SPI3_MOD_OFF)
 #define SPI_CTRL_DFS8        (7u << SPI3_DFS_OFF)
-#define SPI_CTRL_DFS16       (15u << SPI3_DFS_OFF)
+#define SPI_CTRL_DFS32       (31u << SPI3_DFS_OFF)
 
 #define SPI3_TRANS_TYPE_1C1A    0u
 #define SPI3_ADDR_L_24BIT       6u
 #define SPI3_INST_L_8BIT        2u
 #define SPI3_QUAD_DUMMY_CYCLES  8u
-#define SPI3_QUAD_FRAME_BITS    16u
+#define SPI3_QUAD_FRAME_BITS    32u
 
 static volatile spi_t *const SPI3 = (volatile spi_t *)SPI3_BASE_ADDR;
 static uint8_t spi3_clock_log_done;
@@ -193,7 +192,7 @@ static int spi3_eeprom_read(const uint8_t *cmd, uint32_t cmd_len, uint8_t *rx, u
 static int spi3_quad_read_6b(uint32_t addr, uint8_t *rx, uint32_t rx_len)
 {
     uint32_t got = 0;
-    uint32_t rx_frames = (rx_len + 1u) / 2u;
+    uint32_t rx_frames = (rx_len + 3u) / 4u;
 
     if (!rx && rx_len)
         return -1;
@@ -208,7 +207,7 @@ static int spi3_quad_read_6b(uint32_t addr, uint8_t *rx, uint32_t rx_len)
         (SPI3_ADDR_L_24BIT << SPI3_ADDR_L_OFF) |
         (SPI3_INST_L_8BIT << SPI3_INST_L_OFF) |
         (SPI3_QUAD_DUMMY_CYCLES << SPI3_WAIT_CYCLES_OFF);
-    SPI3->ctrlr0 = SPI_CTRL_MODE0 | SPI_CTRL_FRAME_QUAD | SPI_CTRL_DFS16 |
+    SPI3->ctrlr0 = SPI_CTRL_MODE0 | SPI_CTRL_FRAME_QUAD | SPI_CTRL_DFS32 |
                    (SPI_TMOD_EEPROM_READ << SPI3_TMOD_OFF);
     SPI3->ctrlr1 = rx_frames - 1u;
     SPI3->ssienr = 1;
@@ -232,7 +231,11 @@ static int spi3_quad_read_6b(uint32_t addr, uint8_t *rx, uint32_t rx_len)
         for (uint32_t n = 0; n < SPI3_TIMEOUT; ++n) {
             while ((SPI3->sr & SPI3_SR_RFNE) && got < rx_len) {
                 uint32_t frame = SPI3->dr[0];
-                rx[got++] = (uint8_t)(frame >> 8);
+                rx[got++] = (uint8_t)(frame >> 24);
+                if (got < rx_len)
+                    rx[got++] = (uint8_t)(frame >> 16);
+                if (got < rx_len)
+                    rx[got++] = (uint8_t)(frame >> 8);
                 if (got < rx_len)
                     rx[got++] = (uint8_t)(frame >> 0);
                 progressed = 1;
