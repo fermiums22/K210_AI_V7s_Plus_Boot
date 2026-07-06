@@ -34,11 +34,17 @@ void boot_runtime_start(uint32_t reason)
     LOG("BOOT_MODE_ENTER");
     LOG("[boot] " BOOT_VERSION " start");
     LOGF("[boot] reset_status_raw=0x%08lx", (unsigned long)boot_decision_reset_status_raw);
-    LOGF("[boot] reason=0x%08lx app_request=%u wdg=%u app_invalid=%u",
+    LOGF("[boot] reason=0x%08lx app_request=%u wdg=%u app_invalid=%u app_load_fail=%u",
          (unsigned long)g_boot_reason,
          (unsigned)((g_boot_reason & BOOT_REASON_APP_REQUEST) != 0),
          (unsigned)((g_boot_reason & BOOT_REASON_WDG_RESET) != 0),
-         (unsigned)((g_boot_reason & BOOT_REASON_APP_INVALID) != 0));
+         (unsigned)((g_boot_reason & BOOT_REASON_APP_INVALID) != 0),
+         (unsigned)((g_boot_reason & BOOT_REASON_APP_LOAD_FAIL) != 0));
+    LOGF("[boot] app_hdr magic=0x%08lx load=0x%08lx entry=0x%08lx size=%lu",
+         (unsigned long)boot_decision_app_header.magic,
+         (unsigned long)boot_decision_app_header.load_addr,
+         (unsigned long)boot_decision_app_header.entry_addr,
+         (unsigned long)boot_decision_app_header.image_size);
 
     if (xTaskCreate(boot_task, "boot", 4096, NULL, tskIDLE_PRIORITY + 2, NULL) != pdPASS)
         boot_halt_no_scheduler("BOOT_TASK_CREATE_FAIL");
