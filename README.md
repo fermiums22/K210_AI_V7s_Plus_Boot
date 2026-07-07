@@ -12,7 +12,7 @@ Default boot flow:
 K210 ROM -> bootloader -> application
 ```
 
-Bootloader stays almost invisible.  It only stays in boot/update mode when:
+Bootloader stays almost invisible. It only stays in boot/update mode when:
 
 1. application requested update mode;
 2. previous application boot was not confirmed / watchdog recovery path;
@@ -21,7 +21,7 @@ Bootloader stays almost invisible.  It only stays in boot/update mode when:
 
 ## K210-specific note
 
-K210 ROM loads the firmware image into SRAM at `0x80000000`.  It is not an STM32-style XIP boot.  Therefore the bootloader cannot safely overwrite `0x80000000` with the app while it is still executing from there.
+K210 ROM loads the firmware image into SRAM at `0x80000000`. It is not an STM32-style XIP boot. Therefore the bootloader cannot safely overwrite `0x80000000` with the app while it is still executing from there.
 
 Baseline design:
 
@@ -30,7 +30,57 @@ Baseline design:
 0x80100000  application RAM image, loaded/jumped by bootloader
 ```
 
-The application must be linked for `APP_LOAD_ADDR = 0x80100000` when it is booted by this bootloader.  Its normal `_start` then configures its own trap/vector state.
+The application must be linked for `APP_LOAD_ADDR = 0x80100000` when it is booted by this bootloader. Its normal `_start` then configures its own trap/vector state.
+
+## Current test separation
+
+There are now two separate flows. Do not use the app-jump test when the goal is to test bootloader commands.
+
+### 1. Bootloader command/runtime test
+
+This is the main test for bootloader work. It does **not** build or flash the app. It forces `BOOT_SLOT_PROBE=0`, starts boot mode, then automatically tests:
+
+- UART command loop;
+- SD mount + 64-byte write/read verify;
+- SPI3 JEDEC ID;
+- SPI3 flash read;
+- SPI3 flash erase/page-program/readback verify at scratch offset `0x00F00000`.
+
+Run as one command:
+
+```bat
+cd /d D:\w_spase\AI\K210_AI_V7s_Plus_Boot && git switch main && git pull && quick_boot_cmd_test.bat COM8 ..\K210_AI_V7s_Plus
+```
+
+Expected final marker:
+
+```text
+BOOT_CMD_SMOKE_PASS
+```
+
+Expected command markers:
+
+```text
+KBOOT:HELLO
+KBOOT:SD_OK rw-64
+KBOOT:SPI3_ID 0xef6018
+KBOOT:SPI3_READ_OK
+KBOOT:SPI3_RW_OK offset=0x00f00000 size=256
+```
+
+If SDK/libs are missing or need to be refreshed from the app repo, force sync with:
+
+```bat
+quick_boot_cmd_test.bat COM8 ..\K210_AI_V7s_Plus --sync
+```
+
+### 2. App-jump test
+
+This is only for debugging chainload into the app slot. It builds/flashes the app slot and then builds/flashes the bootloader, so it is intentionally heavier.
+
+```bat
+cd /d D:\w_spase\AI\K210_AI_V7s_Plus_Boot && git switch main && git pull && quick_app_boot_test.bat COM8 ..\K210_AI_V7s_Plus
+```
 
 ## Manifest
 
@@ -65,9 +115,10 @@ Current first milestone is intentionally small:
 1. build bootloader;
 2. mount SD;
 3. print boot reason / manifest status on UART;
-4. jump to a test app linked at `0x80100000` if present.
+4. accept bootloader commands for SD/SPI3 tests;
+5. jump to a test app linked at `0x80100000` when app-jump path is selected.
 
-Flash-writing/A-B persistence is the next milestone after chainload works.
+Flash-writing/A-B persistence is the next milestone after boot command path is stable.
 
 ## Local bootstrap
 
@@ -80,7 +131,7 @@ D:\w_spase\AI\K210_AI_V7s_Plus
 D:\w_spase\AI\K210_AI_V7s_Plus_Boot
 ```
 
-Run:
+Manual setup:
 
 ```bat
 cd /d D:\w_spase\AI\K210_AI_V7s_Plus_Boot
@@ -89,34 +140,10 @@ build_boot.bat
 flash_boot.bat COM8 --no-build
 ```
 
-## Quick boot SPI test
+## Legacy boot SPI/load test
 
-First full boot-only test after clone/pull or SDK sync:
-
-```bat
-cd /d D:\w_spase\AI\K210_AI_V7s_Plus_Boot
-git switch main
-git pull
-quick_boot_spi_test.bat COM8 ..\K210_AI_V7s_Plus
-```
-
-Fast repeat after the first full test already configured the build folder:
+`quick_boot_spi_test.bat` is retained for low-level boot SPI read/load diagnostics. It is not the primary command-mode test.
 
 ```bat
-cd /d D:\w_spase\AI\K210_AI_V7s_Plus_Boot
-git switch main
-git pull
-quick_boot_spi_iter.bat COM8 45
-```
-
-Expected successful read/load log markers:
-
-```text
-BOOT_SPI3_CLK ... sck=65000000
-BOOT_SPI_JEDEC ...
-BOOT_SPI_STATUS ... qe=1
-BOOT_QUAD_DIRECT ... mode=quad-dma32...
-BOOT_LOAD_DMA_DONE ...
-BOOT_LOAD_BSWAP_DONE ...
-BOOT_LOAD_DONE mode=quad-dma32-bswap-separated ...
+cd /d D:\w_spase\AI\K210_AI_V7s_Plus_Boot && git switch main && git pull && quick_boot_spi_test.bat COM8 ..\K210_AI_V7s_Plus
 ```
