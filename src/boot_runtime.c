@@ -7,8 +7,6 @@
 #include "boot_cmd.h"
 #include "log.h"
 
-extern void boot_sdk_install_drivers_once(void);
-
 static uint32_t g_boot_reason;
 static StaticTask_t s_idle_task;
 static StackType_t s_idle_task_stack[configMINIMAL_STACK_SIZE];
@@ -24,7 +22,6 @@ static void boot_task(void *arg)
 {
     (void)arg;
     LOG("BOOT_TASK_START");
-    boot_sdk_install_drivers_once();
     boot_cmd_service_run(g_boot_reason);
     for (;;)
         vTaskDelay(pdMS_TO_TICKS(1000));
