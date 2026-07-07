@@ -1,15 +1,5 @@
-#include <kernel/driver.hpp>
-
-extern sys::driver &g_pic_driver_plic0;
-extern sys::driver &g_dmac_driver_dmac0;
-extern sys::driver &g_dma_driver_dma0;
-extern sys::driver &g_dma_driver_dma1;
-extern sys::driver &g_dma_driver_dma2;
-extern sys::driver &g_dma_driver_dma3;
-extern sys::driver &g_dma_driver_dma4;
-extern sys::driver &g_dma_driver_dma5;
-extern sys::driver &g_spi_driver_spi1;
-extern sys::driver &g_gpiohs_driver_gpio0;
+extern "C" void install_hal(void);
+extern "C" void install_drivers(void);
 
 extern "C" void boot_sdk_install_drivers_once(void)
 {
@@ -18,20 +8,11 @@ extern "C" void boot_sdk_install_drivers_once(void)
         return;
     installed = 1;
 
-    /* Minimal SDK runtime needed by boot SD/FatFs path:
-     * - PLIC for DMA completion interrupts;
-     * - DMAC core + channels for SPI DMA;
-     * - SPI1 and GPIOHS for microSD over SPI1 with software CS.
-     * Avoid full install_drivers() here to keep boot mode small and predictable.
+    /* Match the SDK runtime order instead of installing device objects by hand.
+     * install_hal() creates the global PIC handle and DMA free semaphore used by
+     * pic_set_irq_*() and dma_open_free().  install_drivers() installs normal
+     * system devices such as SPI/GPIO that the SD/FatFs path opens by name.
      */
-    g_pic_driver_plic0.install();
-    g_dmac_driver_dmac0.install();
-    g_dma_driver_dma0.install();
-    g_dma_driver_dma1.install();
-    g_dma_driver_dma2.install();
-    g_dma_driver_dma3.install();
-    g_dma_driver_dma4.install();
-    g_dma_driver_dma5.install();
-    g_spi_driver_spi1.install();
-    g_gpiohs_driver_gpio0.install();
+    install_hal();
+    install_drivers();
 }
