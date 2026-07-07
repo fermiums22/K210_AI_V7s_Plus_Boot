@@ -4,8 +4,7 @@
 #include <clint.h>
 #include <encoding.h>
 
-#include "boot_config.h"
-#include "boot_decision.h"
+#include "boot_cmd.h"
 #include "log.h"
 
 static uint32_t g_boot_reason;
@@ -22,19 +21,17 @@ static void boot_prepare_freertos_runtime(void)
 static void boot_task(void *arg)
 {
     (void)arg;
-    uint32_t n = 0;
     LOG("BOOT_TASK_START");
-    for (;;) {
-        LOGF("BOOT_ALIVE %lu reason=0x%08lx", (unsigned long)n++, (unsigned long)g_boot_reason);
+    boot_cmd_service_run(g_boot_reason);
+    for (;;)
         vTaskDelay(pdMS_TO_TICKS(1000));
-    }
 }
 
 static void boot_halt_no_scheduler(const char *msg)
 {
     LOG(msg);
     for (;;)
-        __asm__ volatile("wfi");
+        vTaskDelay(pdMS_TO_TICKS(1000));
 }
 
 void vApplicationIdleHook(void)
@@ -55,7 +52,7 @@ void vApplicationStackOverflowHook(TaskHandle_t xTask, char *pcTaskName)
     (void)xTask;
     LOGF("BOOT_STACK_OVERFLOW %s", pcTaskName ? pcTaskName : "unknown");
     for (;;)
-        __asm__ volatile("wfi");
+        vTaskDelay(pdMS_TO_TICKS(1000));
 }
 
 void boot_runtime_start(uint32_t reason)
@@ -64,28 +61,13 @@ void boot_runtime_start(uint32_t reason)
 
     log_init();
     LOG("BOOT_MODE_ENTER");
-    LOG("[boot] " BOOT_VERSION " start");
-    LOGF("[boot] reset_status_raw=0x%08lx", (unsigned long)boot_decision_reset_status_raw);
-    LOGF("[boot] reason=0x%08lx app_request=%u wdg=%u app_invalid=%u app_load_fail=%u",
-         (unsigned long)g_boot_reason,
-         (unsigned)((g_boot_reason & BOOT_REASON_APP_REQUEST) != 0),
-         (unsigned)((g_boot_reason & BOOT_REASON_WDG_RESET) != 0),
-         (unsigned)((g_boot_reason & BOOT_REASON_APP_INVALID) != 0),
-         (unsigned)((g_boot_reason & BOOT_REASON_APP_LOAD_FAIL) != 0));
-    LOGF("[boot] app_hdr_read_rc=%d", boot_decision_app_header_read_rc);
-    LOGF("[boot] app_hdr magic=0x%08lx inv=0x%08lx load=0x%08lx entry=0x%08lx size=%lu",
-         (unsigned long)boot_decision_app_header.magic,
-         (unsigned long)boot_decision_app_header.magic_inv,
-         (unsigned long)boot_decision_app_header.load_addr,
-         (unsigned long)boot_decision_app_header.entry_addr,
-         (unsigned long)boot_decision_app_header.image_size);
+    LOGF("BOOT_MODE_REASON 0x%08lx", (unsigned long)g_boot_reason);
 
     boot_prepare_freertos_runtime();
 
-    if (xTaskCreate(boot_task, "boot", 4096, NULL, tskIDLE_PRIORITY + 2, NULL) != pdPASS)
+    if (xTaskCreate(boot_task, "bootcmd", 8192, NULL, tskIDLE_PRIORITY + 2, NULL) != pdPASS)
         boot_halt_no_scheduler("BOOT_TASK_CREATE_FAIL");
 
     vTaskStartScheduler();
-
     boot_halt_no_scheduler("BOOT_SCHEDULER_RETURNED");
 }
