@@ -48,9 +48,9 @@ TX_NEW = """static int spi3_tx(const uint8_t *tx, uint32_t tx_len)
     (void)spi3_wait_mask(SPI3_SR_BUSY, 0);
     SPI3->ssienr = 0;
     SPI3->spi_ctrlr0 = 0;
-    /* Use plain TX/RX for write-side flash commands.  TX_ONLY on this SSI can
-     * stall/truncate long page-program payloads; draining RX while transmitting
-     * keeps the stream moving and keeps CS low for the whole command.
+    /* Use plain TX/RX for write-side flash commands and drain exactly one RX
+     * byte for every TX byte.  Without this, RX FIFO fills after 8 frames and
+     * the page-program stream effectively stops after the command+address+4B.
      */
     SPI3->ctrlr0 = SPI_CTRL_MODE0 | SPI_CTRL_FRAME_STD | SPI_CTRL_DFS8 |
                    (SPI_TMOD_TX_RX << SPI3_TMOD_OFF);
@@ -63,7 +63,11 @@ TX_NEW = """static int spi3_tx(const uint8_t *tx, uint32_t tx_len)
             return -2;
         }
         SPI3->dr[0] = tx[i];
-        spi3_flush_rx();
+        if (spi3_wait_mask(SPI3_SR_RFNE, SPI3_SR_RFNE) != 0) {
+            spi3_deassert();
+            return -5;
+        }
+        (void)SPI3->dr[0];
     }
 
     if (spi3_wait_mask(SPI3_SR_TFE, SPI3_SR_TFE) != 0) {
@@ -107,26 +111,6 @@ PP_NEW = """    /* Do not use s_buf here: callers use it as the expected payload
     rc = spi3_tx(s_verify, len + 4u);
 """
 
-RW_OLD = """    rc = spi3_page_program(offset, s_buf, BOOT_SPI3_SCRATCH_SIZE);
-    if (rc != 0) {
-        snprintf(detail, detail_size, "prog-rc=%d", rc);
-        return false;
-    }
-
-    rc = boot_flash_read(offset, s_verify, BOOT_SPI3_SCRATCH_SIZE);
-"""
-
-RW_NEW = """    for (uint32_t pos = 0; pos < BOOT_SPI3_SCRATCH_SIZE; pos += 4u) {
-        rc = spi3_page_program(offset + pos, &s_buf[pos], 4u);
-        if (rc != 0) {
-            snprintf(detail, detail_size, "prog-pos=%lu-rc=%d", (unsigned long)pos, rc);
-            return false;
-        }
-    }
-
-    rc = boot_flash_read(offset, s_verify, BOOT_SPI3_SCRATCH_SIZE);
-"""
-
 
 def replace_once(text: str, old: str, new: str, label: str) -> tuple[str, int]:
     if new in text:
@@ -142,10 +126,9 @@ def main() -> int:
     text = PATH.read_text(encoding="utf-8")
     text, tx_changed = replace_once(text, TX_OLD, TX_NEW, "spi3_tx")
     text, pp_changed = replace_once(text, PP_OLD, PP_NEW, "page_program_buffer")
-    text, rw_changed = replace_once(text, RW_OLD, RW_NEW, "rw_4byte_chunks")
-    if tx_changed or pp_changed or rw_changed:
+    if tx_changed or pp_changed:
         PATH.write_text(text, encoding="utf-8")
-    print(f"BOOT_SPI3_TX_PATCH_OK tx={tx_changed} pagebuf={pp_changed} rw4={rw_changed}")
+    print(f"BOOT_SPI3_TX_PATCH_OK tx={tx_changed} pagebuf={pp_changed}")
     return 0
 
 
