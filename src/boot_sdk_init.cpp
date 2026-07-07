@@ -1,6 +1,6 @@
 #include "log.h"
 
-extern "C" void install_drivers();
+void install_drivers();
 
 extern "C" void boot_sdk_install_drivers_once(void)
 {
