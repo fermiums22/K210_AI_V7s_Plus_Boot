@@ -39,56 +39,52 @@ int boot_flash_program(uint32_t flash_offset, const void *src, uint32_t len);
 def patch_flash_c() -> int:
     text = BOOT_FLASH_C.read_text(encoding="utf-8")
 
-    define_old = """#define SPI3_READ_SR1_CMD     0x05u
+    replacements = [
+        ("""#define SPI3_READ_SR1_CMD     0x05u
 #define SPI3_READ_SR2_CMD     0x35u
 #define SPI3_QUAD_READ_CHUNK  (32u * 1024u)
-"""
-    define_new = """#define SPI3_READ_SR1_CMD     0x05u
+""", """#define SPI3_READ_SR1_CMD     0x05u
 #define SPI3_READ_SR2_CMD     0x35u
 #define SPI3_WRITE_ENABLE_CMD 0x06u
 #define SPI3_PAGE_PROGRAM_CMD 0x02u
 #define SPI3_SECTOR_ERASE_CMD 0x20u
 #define SPI3_QUAD_READ_CHUNK  (32u * 1024u)
-"""
-    text, d1 = replace_once(text, define_old, define_new, "boot_flash.c cmd defines")
-
-    define2_old = """#define SPI3_DMA_TIMEOUT      5000000u
+""", "boot_flash.c cmd defines"),
+        ("""#define SPI3_DMA_TIMEOUT      5000000u
 #define SPI3_FLUSH_LIMIT      128u
 #define BOOT_CYCLE_HZ         390000000ull
 #define FLASH_SR2_QE_MASK     0x02u
-"""
-    define2_new = """#define SPI3_DMA_TIMEOUT      5000000u
+""", """#define SPI3_DMA_TIMEOUT      5000000u
 #define SPI3_WIP_TIMEOUT      8000000u
 #define SPI3_FLUSH_LIMIT      128u
 #define BOOT_CYCLE_HZ         390000000ull
 #define FLASH_SR1_WIP_MASK    0x01u
 #define FLASH_SR1_WEL_MASK    0x02u
 #define FLASH_SR2_QE_MASK     0x02u
-"""
-    text, d2 = replace_once(text, define2_old, define2_new, "boot_flash.c status defines")
-
-    define3_old = """#define SPI_TMOD_EEPROM_READ 3u
+""", "boot_flash.c status defines"),
+        ("""#define SPI_TMOD_EEPROM_READ 3u
 
 #define SPI_CTRL_FRAME_STD   (0u << SPI3_FRF_OFF)
-"""
-    define3_new = """#define SPI_TMOD_TX_RX       0u
+""", """#define SPI_TMOD_TX_RX       0u
 #define SPI_TMOD_TX_ONLY     1u
 #define SPI_TMOD_EEPROM_READ 3u
 
 #define SPI_CTRL_FRAME_STD   (0u << SPI3_FRF_OFF)
-"""
-    text, d3 = replace_once(text, define3_old, define3_new, "boot_flash.c tmod defines")
-
-    define4_old = """#define SPI3_BAUDR           2u
+""", "boot_flash.c tmod defines"),
+        ("""#define SPI3_BAUDR           2u
 
 #define SPI3_SR_BUSY        0x01u
-"""
-    define4_new = """#define SPI3_BAUDR           2u
-#define SPI3_BAUDR_WRITE     8u
+""", """#define SPI3_BAUDR           2u
+#define SPI3_BAUDR_WRITE     16u
 
 #define SPI3_SR_BUSY        0x01u
-"""
-    text, d4 = replace_once(text, define4_old, define4_new, "boot_flash.c write baud")
+""", "boot_flash.c write baud"),
+    ]
+
+    changed = 0
+    for old, new, label in replacements:
+        text, n = replace_once(text, old, new, label)
+        changed += n
 
     helper_marker = """static int spi3_read_jedec_id_raw(uint8_t id[3])
 """
@@ -116,12 +112,12 @@ def patch_flash_c() -> int:
     spi3_flush_rx_bounded();
 }
 
-static int spi3_std_tx_only(const uint8_t *tx, uint32_t tx_len)
+static int spi3_std_tx_stream(const uint8_t *tx, uint32_t tx_len)
 {
     if (!tx || tx_len == 0)
         return -1;
 
-    spi3_prepare_std(SPI_TMOD_TX_ONLY, SPI3_BAUDR_WRITE);
+    spi3_prepare_std(SPI_TMOD_TX_RX, SPI3_BAUDR_WRITE);
     SPI3->ssienr = 1;
     SPI3->ser = SPI3_CS_MASK;
 
@@ -131,6 +127,11 @@ static int spi3_std_tx_only(const uint8_t *tx, uint32_t tx_len)
             return -2;
         }
         SPI3->dr[0] = tx[i];
+        if (spi3_wait_mask(SPI3_SR_RFNE, SPI3_SR_RFNE) != 0) {
+            spi3_deassert();
+            return -5;
+        }
+        (void)SPI3->dr[0];
     }
 
     if (spi3_wait_mask(SPI3_SR_TFE, SPI3_SR_TFE) != 0) {
@@ -155,7 +156,7 @@ static int spi3_flash_write_enable(void)
 {
     uint8_t cmd = SPI3_WRITE_ENABLE_CMD;
     uint8_t sr1 = 0xffu;
-    int rc = spi3_std_tx_only(&cmd, 1);
+    int rc = spi3_std_tx_stream(&cmd, 1);
     if (rc != 0)
         return -10 + rc;
 
@@ -197,9 +198,7 @@ static int spi3_flash_wait_wip_clear(const char *tag)
         if helper_marker not in text:
             raise SystemExit("PATCH_FAIL boot_flash.c helper marker not found")
         text = text.replace(helper_marker, helper_code + helper_marker, 1)
-        helpers = 1
-    else:
-        helpers = 0
+        changed += 1
 
     api_marker = """uint32_t boot_flash_read_jedec_id(void)
 """
@@ -239,7 +238,7 @@ int boot_flash_erase_4k(uint32_t flash_offset)
     if (rc != 0)
         return -10 + rc;
 
-    rc = spi3_std_tx_only(cmd, sizeof(cmd));
+    rc = spi3_std_tx_stream(cmd, sizeof(cmd));
     LOGF("BOOT_SPI3_ERASE_TX off=0x%08lx rc=%d", (unsigned long)flash_offset, rc);
     if (rc != 0)
         return -20 + rc;
@@ -271,8 +270,8 @@ int boot_flash_program(uint32_t flash_offset, const void *src, uint32_t len)
     if (rc != 0)
         return -10 + rc;
 
-    rc = spi3_std_tx_only(cmd, len + 4u);
-    LOGF("BOOT_SPI3_PROG_TX off=0x%08lx len=%lu rc=%d",
+    rc = spi3_std_tx_stream(cmd, len + 4u);
+    LOGF("BOOT_SPI3_PROG_TX_STREAM off=0x%08lx len=%lu rc=%d",
          (unsigned long)flash_offset, (unsigned long)len, rc);
     if (rc != 0)
         return -20 + rc;
@@ -288,11 +287,8 @@ int boot_flash_program(uint32_t flash_offset, const void *src, uint32_t len)
         if api_marker not in text:
             raise SystemExit("PATCH_FAIL boot_flash.c api marker not found")
         text = text.replace(api_marker, api_code + api_marker, 1)
-        api = 1
-    else:
-        api = 0
+        changed += 1
 
-    changed = d1 + d2 + d3 + d4 + helpers + api
     if changed:
         BOOT_FLASH_C.write_text(text, encoding="utf-8")
     return changed
