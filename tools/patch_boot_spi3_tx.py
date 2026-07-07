@@ -4,7 +4,18 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 PATH = ROOT / "src" / "boot_cmd.c"
 
-TX_OLD = """    SPI3->ssienr = 1;
+TX_OLD = """static int spi3_tx(const uint8_t *tx, uint32_t tx_len)
+{
+    if (!tx || tx_len == 0)
+        return -1;
+
+    spi3_std_init();
+    (void)spi3_wait_mask(SPI3_SR_BUSY, 0);
+    SPI3->ssienr = 0;
+    SPI3->spi_ctrlr0 = 0;
+    SPI3->ctrlr0 = SPI_CTRL_MODE0 | SPI_CTRL_FRAME_STD | SPI_CTRL_DFS8 |
+                   (SPI_TMOD_TX_ONLY << SPI3_TMOD_OFF);
+    SPI3->ssienr = 1;
 
     for (uint32_t i = 0; i < tx_len; i++) {
         if (spi3_wait_mask(SPI3_SR_TFNF, SPI3_SR_TFNF) != 0) {
@@ -15,13 +26,35 @@ TX_OLD = """    SPI3->ssienr = 1;
     }
 
     SPI3->ser = SPI3_CS_MASK;
+    if (spi3_wait_mask(SPI3_SR_TFE, SPI3_SR_TFE) != 0) {
+        spi3_deassert();
+        return -3;
+    }
+    if (spi3_wait_mask(SPI3_SR_BUSY, 0) != 0) {
+        spi3_deassert();
+        return -4;
+    }
+    spi3_deassert();
+    return 0;
+}
 """
 
-TX_NEW = """    SPI3->ssienr = 1;
-    /* SER must be asserted before filling long TX-only transfers.
-     * Otherwise page-program payloads larger than the SPI FIFO never start
-     * shifting and spi3_tx() times out waiting for TFNF.
+TX_NEW = """static int spi3_tx(const uint8_t *tx, uint32_t tx_len)
+{
+    if (!tx || tx_len == 0)
+        return -1;
+
+    spi3_std_init();
+    (void)spi3_wait_mask(SPI3_SR_BUSY, 0);
+    SPI3->ssienr = 0;
+    SPI3->spi_ctrlr0 = 0;
+    /* Use plain TX/RX for write-side flash commands.  TX_ONLY on this SSI can
+     * stall/truncate long page-program payloads; draining RX while transmitting
+     * keeps the stream moving and keeps CS low for the whole command.
      */
+    SPI3->ctrlr0 = SPI_CTRL_MODE0 | SPI_CTRL_FRAME_STD | SPI_CTRL_DFS8 |
+                   (SPI_TMOD_TX_RX << SPI3_TMOD_OFF);
+    SPI3->ssienr = 1;
     SPI3->ser = SPI3_CS_MASK;
 
     for (uint32_t i = 0; i < tx_len; i++) {
@@ -30,8 +63,21 @@ TX_NEW = """    SPI3->ssienr = 1;
             return -2;
         }
         SPI3->dr[0] = tx[i];
+        spi3_flush_rx();
     }
 
+    if (spi3_wait_mask(SPI3_SR_TFE, SPI3_SR_TFE) != 0) {
+        spi3_deassert();
+        return -3;
+    }
+    if (spi3_wait_mask(SPI3_SR_BUSY, 0) != 0) {
+        spi3_deassert();
+        return -4;
+    }
+    spi3_flush_rx();
+    spi3_deassert();
+    return 0;
+}
 """
 
 PP_OLD = """    s_buf[0] = SPI3_PAGE_PROGRAM_CMD;
