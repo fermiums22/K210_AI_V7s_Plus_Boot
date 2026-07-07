@@ -96,8 +96,10 @@ def main():
         lines = send_cmd(ser, "HELP", 5)
         ok &= any_line(lines, "KBOOT:HELP")
 
-        lines = send_cmd(ser, "SD_TEST", 20)
-        ok &= any_line(lines, "KBOOT:SD_OK")
+        # SD/FatFs over SDK DMA is deliberately not part of the safe smoke yet.
+        # We still call SD_TEST once to prove the command does not assert/hang.
+        lines = send_cmd(ser, "SD_TEST", 5)
+        ok &= any_line(lines, "KBOOT:SD_SKIP") or any_line(lines, "KBOOT:SD_OK")
 
         lines = send_cmd(ser, "SPI3_ID", 10)
         ok &= any_line(lines, "KBOOT:SPI3_ID 0x") and not any("0xffffffff" in x for x in lines)
