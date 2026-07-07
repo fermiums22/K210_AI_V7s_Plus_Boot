@@ -47,6 +47,7 @@ def patch_flash_c() -> int:
 #define SPI3_QUAD_READ_CHUNK  (32u * 1024u)
 """, """#define SPI3_READ_SR1_CMD     0x05u
 #define SPI3_READ_SR2_CMD     0x35u
+#define SPI3_READ_DATA_CMD    0x03u
 #define SPI3_WRITE_ENABLE_CMD 0x06u
 #define SPI3_PAGE_PROGRAM_CMD 0x02u
 #define SPI3_SECTOR_ERASE_CMD 0x20u
@@ -67,8 +68,7 @@ def patch_flash_c() -> int:
         ("""#define SPI_TMOD_EEPROM_READ 3u
 
 #define SPI_CTRL_FRAME_STD   (0u << SPI3_FRF_OFF)
-""", """#define SPI_TMOD_TX_RX       0u
-#define SPI_TMOD_TX_ONLY     1u
+""", """#define SPI_TMOD_TX_ONLY     1u
 #define SPI_TMOD_EEPROM_READ 3u
 
 #define SPI_CTRL_FRAME_STD   (0u << SPI3_FRF_OFF)
@@ -209,13 +209,31 @@ static int spi3_flash_wait_wip_clear(const char *tag)
     read_api_new = read_api_marker + r'''
 int boot_flash_read_raw(uint32_t flash_offset, void *dst, uint32_t len)
 {
-    /* Raw bytes from flash: no boot-loader bswap32 post-processing.  Use this
-     * for write/verify tests; boot_flash_read() is for app image/header data.
+    uint8_t cmd[4];
+    uint8_t *out = (uint8_t *)dst;
+
+    if (!out && len)
+        return -1;
+    if (len == 0)
+        return 0;
+
+    /* Slow byte-accurate verify path.  Do not use quad DMA here: the boot image
+     * read path deliberately post-processes 32-bit words and raw DMA order is
+     * not byte-for-byte suitable for write verification.
      */
-    return boot_flash_read_dma32_raw(flash_offset, dst, len);
+    cmd[0] = SPI3_READ_DATA_CMD;
+    cmd[1] = (uint8_t)((flash_offset >> 16) & 0xffu);
+    cmd[2] = (uint8_t)((flash_offset >> 8) & 0xffu);
+    cmd[3] = (uint8_t)(flash_offset & 0xffu);
+
+    boot_flash_spi3_init();
+    spi3_dma_disable_channel();
+    spi3_dma_clear_ints();
+    SPI3->baudr = SPI3_BAUDR_WRITE;
+    return spi3_eeprom_read(cmd, sizeof(cmd), out, len);
 }
 '''
-    text, n = replace_once(text, read_api_marker, read_api_new, "boot_flash.c raw read api")
+    text, n = replace_once(text, read_api_marker, read_api_new, "boot_flash.c slow raw read api")
     changed += n
 
     api_marker = """uint32_t boot_flash_read_jedec_id(void)
