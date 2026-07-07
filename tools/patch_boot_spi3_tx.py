@@ -84,6 +84,43 @@ TX_NEW = """static int spi3_tx(const uint8_t *tx, uint32_t tx_len)
 }
 """
 
+WIP_OLD = """static int spi3_wait_wip_clear(void)
+{
+    for (uint32_t n = 0; n < SPI3_WIP_TIMEOUT; n++) {
+        uint8_t sr1 = 0xffu;
+        if (spi3_read_sr1(&sr1) != 0)
+            return -1;
+        if ((sr1 & SPI3_WIP_MASK) == 0)
+            return 0;
+        if ((n & 0x3ffu) == 0)
+            taskYIELD();
+    }
+    return -2;
+}
+"""
+
+WIP_NEW = """static int spi3_wait_wip_clear(void)
+{
+    uint8_t last_sr1 = 0xffu;
+    int last_rc = 0;
+    for (uint32_t n = 0; n < SPI3_WIP_TIMEOUT; n++) {
+        uint8_t sr1 = 0xffu;
+        last_rc = spi3_read_sr1(&sr1);
+        last_sr1 = sr1;
+        if (last_rc != 0) {
+            LOGF(\"BOOT_SPI3_WIP_READ_FAIL rc=%d sr1=0x%02x\", last_rc, (unsigned)sr1);
+            return -1;
+        }
+        if ((sr1 & SPI3_WIP_MASK) == 0)
+            return 0;
+        if ((n & 0x3ffu) == 0)
+            taskYIELD();
+    }
+    LOGF(\"BOOT_SPI3_WIP_TIMEOUT rc=%d sr1=0x%02x\", last_rc, (unsigned)last_sr1);
+    return -2;
+}
+"""
+
 PP_OLD = """    s_buf[0] = SPI3_PAGE_PROGRAM_CMD;
     s_buf[1] = (uint8_t)((offset >> 16) & 0xffu);
     s_buf[2] = (uint8_t)((offset >> 8) & 0xffu);
@@ -108,7 +145,19 @@ PP_NEW = """    /* Do not use s_buf here: callers use it as the expected payload
     int rc = spi3_write_enable();
     if (rc != 0)
         return -10 + rc;
+    {
+        uint8_t sr1 = 0xffu;
+        int sr_rc = spi3_read_sr1(&sr1);
+        LOGF(\"BOOT_SPI3_PP_AFTER_WREN rc=%d sr1=0x%02x off=0x%08lx len=%lu\",
+             sr_rc, (unsigned)sr1, (unsigned long)offset, (unsigned long)len);
+    }
     rc = spi3_tx(s_verify, len + 4u);
+    {
+        uint8_t sr1 = 0xffu;
+        int sr_rc = spi3_read_sr1(&sr1);
+        LOGF(\"BOOT_SPI3_PP_AFTER_TX txrc=%d sr_rc=%d sr1=0x%02x\",
+             rc, sr_rc, (unsigned)sr1);
+    }
 """
 
 
@@ -125,10 +174,11 @@ def main() -> int:
         raise SystemExit(f"PATCH_FAIL missing {PATH}")
     text = PATH.read_text(encoding="utf-8")
     text, tx_changed = replace_once(text, TX_OLD, TX_NEW, "spi3_tx")
+    text, wip_changed = replace_once(text, WIP_OLD, WIP_NEW, "wip_debug")
     text, pp_changed = replace_once(text, PP_OLD, PP_NEW, "page_program_buffer")
-    if tx_changed or pp_changed:
+    if tx_changed or wip_changed or pp_changed:
         PATH.write_text(text, encoding="utf-8")
-    print(f"BOOT_SPI3_TX_PATCH_OK tx={tx_changed} pagebuf={pp_changed}")
+    print(f"BOOT_SPI3_TX_PATCH_OK tx={tx_changed} wipdbg={wip_changed} pagebuf={pp_changed}")
     return 0
 
 
