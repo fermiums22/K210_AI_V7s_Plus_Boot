@@ -8,6 +8,7 @@
 #include <filesystem.h>
 #include <ff.h>
 #include <platform.h>
+#include <stdarg.h>
 #include <stdint.h>
 #include <stdbool.h>
 #include <stdio.h>
@@ -22,6 +23,9 @@
 #define BOOT_CMD_READY_PERIOD_MS     1000u
 #define BOOT_SPI3_SCRATCH_OFFSET     0x00F00000u
 #define BOOT_SPI3_SCRATCH_SIZE       256u
+#define BOOT_SD_DEFAULT_PATH         "0:/app_slot0.bin"
+#define BOOT_SD_DEFAULT_READ_LEN     256u
+#define BOOT_SD_MAX_READ_LEN         256u
 
 #define UARTHS_RXDATA_EMPTY_MASK     (1u << 31)
 
@@ -50,6 +54,16 @@ static int deadline_expired(TickType_t start, uint32_t timeout_ms)
 static void host_puts(const char *s)
 {
     uarths_puts(s);
+}
+
+static void host_printf(const char *fmt, ...)
+{
+    char line[192];
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(line, sizeof(line), fmt, ap);
+    va_end(ap);
+    host_puts(line);
 }
 
 static int uarths_try_read_byte(uint8_t *out)
@@ -148,9 +162,122 @@ static int wait_magic(uint32_t window_ms)
     return 0;
 }
 
+static void hex_dump_line_prefixed(const char *prefix, const uint8_t *data, uint32_t len)
+{
+    char line[192];
+    uint32_t pos = 0;
+    pos += snprintf(line + pos, sizeof(line) - pos, "%s", prefix);
+    for (uint32_t i = 0; i < len && pos + 4 < sizeof(line); i++)
+        pos += snprintf(line + pos, sizeof(line) - pos, " %02x", data[i]);
+    snprintf(line + pos, sizeof(line) - pos, "\n");
+    host_puts(line);
+}
+
+static void hex_dump_line(const uint8_t *data, uint32_t len)
+{
+    hex_dump_line_prefixed("KBOOT:SPI3_DATA", data, len);
+}
+
+static void sd_normalize_path(const char *arg, char *out, size_t out_size)
+{
+    const char *path = (arg && arg[0]) ? arg : BOOT_SD_DEFAULT_PATH;
+
+    if (strncmp(path, "/fs/", 4) == 0) {
+        snprintf(out, out_size, "%s", path);
+    } else if (strncmp(path, "0:/", 3) == 0) {
+        snprintf(out, out_size, "/fs/0/%s", path + 3);
+    } else if (path[0] == '/') {
+        snprintf(out, out_size, "/fs/0%s", path);
+    } else {
+        snprintf(out, out_size, "/fs/0/%s", path);
+    }
+}
+
+static bool sd_mount_debug(void)
+{
+    LOG("BOOT_SD_MOUNT_BEGIN");
+    host_puts("KBOOT:SD_MOUNT_BEGIN\n");
+    host_puts("KBOOT:SD_LOWLEVEL_VIA sd_mount\n");
+
+    bool ok = sd_mount();
+
+    LOGF("BOOT_SD_MOUNT_RESULT ok=%u", ok ? 1u : 0u);
+    host_printf("KBOOT:SD_MOUNT_RESULT ok=%u\n", ok ? 1u : 0u);
+    return ok;
+}
+
+static void sd_mount_command(void)
+{
+    LOG("BOOT_CMD SD_MOUNT");
+    host_puts("KBOOT:SD_DEBUG_BEGIN op=mount\n");
+    (void)sd_mount_debug();
+    host_puts("KBOOT:SD_DEBUG_END op=mount\n");
+}
+
+static void sd_read_command(const char *line)
+{
+    char raw_path[128] = BOOT_SD_DEFAULT_PATH;
+    char fs_path[160];
+    unsigned long len = BOOT_SD_DEFAULT_READ_LEN;
+
+    int narg = sscanf(line, "SD_READ %127s %lu", raw_path, &len);
+    if (narg < 1) {
+        snprintf(raw_path, sizeof(raw_path), "%s", BOOT_SD_DEFAULT_PATH);
+        len = BOOT_SD_DEFAULT_READ_LEN;
+    } else if (narg < 2) {
+        len = BOOT_SD_DEFAULT_READ_LEN;
+    }
+
+    if (len == 0 || len > BOOT_SD_MAX_READ_LEN) {
+        host_printf("KBOOT:SD_READ_FAIL bad-len=%lu max=%lu\n",
+                    len, (unsigned long)BOOT_SD_MAX_READ_LEN);
+        return;
+    }
+
+    sd_normalize_path(raw_path, fs_path, sizeof(fs_path));
+
+    LOGF("BOOT_CMD SD_READ path=%s len=%lu", fs_path, len);
+    host_printf("KBOOT:SD_DEBUG_BEGIN op=read file=%s len=%lu\n",
+                raw_path, len);
+
+    if (!sd_mount_debug()) {
+        host_puts("KBOOT:SD_READ_FAIL mount\n");
+        host_puts("KBOOT:SD_DEBUG_END op=read\n");
+        return;
+    }
+
+    host_printf("KBOOT:SD_OPEN_BEGIN path=%s\n", fs_path);
+    handle_t f = filesystem_file_open(fs_path, FILE_ACCESS_READ, FILE_MODE_OPEN_EXISTING);
+    if (!f) {
+        LOGF("BOOT_SD_OPEN_FAIL path=%s", fs_path);
+        host_printf("KBOOT:SD_OPEN_RESULT ok=0 path=%s\n", fs_path);
+        host_puts("KBOOT:SD_READ_FAIL open\n");
+        host_puts("KBOOT:SD_DEBUG_END op=read\n");
+        return;
+    }
+
+    host_printf("KBOOT:SD_OPEN_RESULT ok=1 path=%s\n", fs_path);
+    memset(s_buf, 0, len);
+
+    host_printf("KBOOT:SD_READ_BEGIN len=%lu\n", len);
+    int got = filesystem_file_read(f, s_buf, (int)len);
+    filesystem_file_close(f);
+
+    host_printf("KBOOT:SD_READ_RESULT requested=%lu got=%d\n", len, got);
+    if (got <= 0) {
+        host_puts("KBOOT:SD_READ_FAIL read\n");
+        host_puts("KBOOT:SD_DEBUG_END op=read\n");
+        return;
+    }
+
+    hex_dump_line_prefixed("KBOOT:SD_DATA", s_buf, (uint32_t)got);
+    host_puts("KBOOT:SD_READ_OK\n");
+    host_puts("KBOOT:SD_DEBUG_END op=read\n");
+}
+
 static bool sd_rw_probe(void)
 {
-    if (!sd_mount())
+    if (!sd_mount_debug())
         return false;
 
     const char *fs_path = "/fs/0/boot_selftest.bin";
@@ -162,20 +289,37 @@ static bool sd_rw_probe(void)
         wr[i] = (uint8_t)((i * 37u + 11u) & 0xffu);
     memset(rd, 0, sizeof(rd));
 
+    host_printf("KBOOT:SD_UNLINK_BEGIN path=%s\n", fat_path);
     f_unlink(fat_path);
+    host_printf("KBOOT:SD_OPEN_BEGIN path=%s mode=write\n", fs_path);
     handle_t f = filesystem_file_open(fs_path, FILE_ACCESS_WRITE, FILE_MODE_CREATE_ALWAYS);
-    if (!f)
+    if (!f) {
+        host_puts("KBOOT:SD_OPEN_RESULT ok=0 mode=write\n");
         return false;
+    }
+    host_puts("KBOOT:SD_OPEN_RESULT ok=1 mode=write\n");
+
+    host_printf("KBOOT:SD_WRITE_BEGIN len=%lu\n", (unsigned long)sizeof(wr));
     int n = filesystem_file_write(f, wr, sizeof(wr));
     filesystem_file_close(f);
+    host_printf("KBOOT:SD_WRITE_RESULT requested=%lu got=%d\n",
+                (unsigned long)sizeof(wr), n);
     if (n != (int)sizeof(wr))
         return false;
 
+    host_printf("KBOOT:SD_OPEN_BEGIN path=%s mode=read\n", fs_path);
     f = filesystem_file_open(fs_path, FILE_ACCESS_READ, FILE_MODE_OPEN_EXISTING);
-    if (!f)
+    if (!f) {
+        host_puts("KBOOT:SD_OPEN_RESULT ok=0 mode=read\n");
         return false;
+    }
+    host_puts("KBOOT:SD_OPEN_RESULT ok=1 mode=read\n");
+
+    host_printf("KBOOT:SD_READ_BEGIN len=%lu\n", (unsigned long)sizeof(rd));
     n = filesystem_file_read(f, rd, sizeof(rd));
     filesystem_file_close(f);
+    host_printf("KBOOT:SD_READ_RESULT requested=%lu got=%d\n",
+                (unsigned long)sizeof(rd), n);
     if (n != (int)sizeof(rd))
         return false;
 
@@ -225,20 +369,10 @@ static bool spi3_rw_probe(uint32_t offset, char *detail, size_t detail_size)
     return true;
 }
 
-static void hex_dump_line(const uint8_t *data, uint32_t len)
-{
-    char line[192];
-    uint32_t pos = 0;
-    pos += snprintf(line + pos, sizeof(line) - pos, "KBOOT:SPI3_DATA");
-    for (uint32_t i = 0; i < len && pos + 4 < sizeof(line); i++)
-        pos += snprintf(line + pos, sizeof(line) - pos, " %02x", data[i]);
-    snprintf(line + pos, sizeof(line) - pos, "\n");
-    host_puts(line);
-}
-
 static void help_command(void)
 {
-    host_puts("KBOOT:HELP HELP SELFTEST SD_TEST SPI3_ID SPI3_READ <off> <len> SPI3_RW [off] RESET DONE\n");
+    host_puts("KBOOT:HELP HELP SELFTEST SPI3_ID SPI3_READ <off> <len> SPI3_RW [off] SD_MOUNT SD_READ [path] [len] SD_TEST RESET DONE\n");
+    host_puts("KBOOT:HELP sd-default=0:/app_slot0.bin sd-read-max=256\n");
     host_puts("KBOOT:HELP scratch-default=0x00F00000 rw-erases-4k-sector\n");
     host_puts("KBOOT:HELP_END\n");
 }
@@ -246,7 +380,9 @@ static void help_command(void)
 static void sd_test_command(void)
 {
     LOG("BOOT_CMD SD_TEST");
+    host_puts("KBOOT:SD_DEBUG_BEGIN op=rw-test\n");
     host_puts(sd_rw_probe() ? "KBOOT:SD_OK rw-64\n" : "KBOOT:SD_FAIL rw\n");
+    host_puts("KBOOT:SD_DEBUG_END op=rw-test\n");
 }
 
 static void spi3_id_command(void)
@@ -305,10 +441,7 @@ static void selftest_command(void)
     uint32_t jedec = boot_flash_read_jedec_id();
     host_puts("KBOOT:TEST_BEGIN\n");
     host_puts("KBOOT:TEST CMD PASS command-loop\n");
-    if (sd_rw_probe())
-        host_puts("KBOOT:TEST SD_RW PASS 64-bytes\n");
-    else
-        host_puts("KBOOT:TEST SD_RW FAIL rw\n");
+    host_puts("KBOOT:TEST SD_RW SKIP use-SD_MOUNT-or-SD_READ\n");
     {
         char out[80];
         snprintf(out, sizeof(out), "KBOOT:TEST SPI3_ID %s 0x%06lx\n",
@@ -350,6 +483,8 @@ static void command_loop(void)
         if (strcmp(line, "DONE") == 0) { host_puts("KBOOT:DONE\n"); return; }
         if (strcmp(line, "HELP") == 0) { help_command(); continue; }
         if (strcmp(line, "SELFTEST") == 0) { selftest_command(); continue; }
+        if (strcmp(line, "SD_MOUNT") == 0) { sd_mount_command(); continue; }
+        if (strncmp(line, "SD_READ", 7) == 0) { sd_read_command(line); continue; }
         if (strcmp(line, "SD_TEST") == 0) { sd_test_command(); continue; }
         if (strcmp(line, "SPI3_ID") == 0) { spi3_id_command(); continue; }
         if (strncmp(line, "SPI3_READ", 9) == 0) { spi3_read_command(line); continue; }
