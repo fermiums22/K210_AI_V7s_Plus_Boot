@@ -23,6 +23,7 @@ add_subdirectory("${CMAKE_SOURCE_DIR}/lib/drivers"  "${CMAKE_BINARY_DIR}/drivers
 
 file(GLOB APP_SOURCES
     "${CMAKE_SOURCE_DIR}/src/*.c"
+    "${CMAKE_SOURCE_DIR}/src/*.cpp"
     "${CMAKE_SOURCE_DIR}/src/*.S"
 )
 
