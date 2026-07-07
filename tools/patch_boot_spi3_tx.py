@@ -111,6 +111,10 @@ WIP_NEW = """static int spi3_wait_wip_clear(void)
             LOGF(\"BOOT_SPI3_WIP_READ_FAIL rc=%d sr1=0x%02x\", last_rc, (unsigned)sr1);
             return -1;
         }
+        if (sr1 == 0xffu) {
+            LOGF(\"BOOT_SPI3_WIP_BUS_FF sr1=0x%02x\", (unsigned)sr1);
+            return -6;
+        }
         if ((sr1 & SPI3_WIP_MASK) == 0)
             return 0;
         if ((n & 0x3ffu) == 0)
