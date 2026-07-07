@@ -57,6 +57,23 @@ def send_cmd(ser, cmd, timeout_s=15):
     return lines
 
 
+def send_done(ser, timeout_s=3):
+    print(">>> DONE")
+    ser.write(b"DONE\n")
+    ser.flush()
+    deadline = time.time() + timeout_s
+    lines = []
+    while time.time() < deadline:
+        line = read_line(ser, deadline)
+        if line is None:
+            break
+        print(line)
+        lines.append(line)
+        if line == "KBOOT:DONE":
+            return lines
+    return lines
+
+
 def any_line(lines, prefix):
     return any(line.startswith(prefix) for line in lines)
 
@@ -105,7 +122,7 @@ def main():
         lines = send_cmd(ser, "SPI3_RW", 30)
         ok &= any_line(lines, "KBOOT:SPI3_RW_OK")
 
-        send_cmd(ser, "DONE", 5)
+        send_done(ser, 3)
 
     print("BOOT_CMD_SMOKE_PASS" if ok else "BOOT_CMD_SMOKE_FAIL")
     return 0 if ok else 10
