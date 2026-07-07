@@ -88,3 +88,35 @@ bootstrap_from_app.bat ..\K210_AI_V7s_Plus
 build_boot.bat
 flash_boot.bat COM8 --no-build
 ```
+
+## Quick boot SPI test
+
+First full boot-only test after clone/pull or SDK sync:
+
+```bat
+cd /d D:\w_spase\AI\K210_AI_V7s_Plus_Boot
+git switch main
+git pull
+quick_boot_spi_test.bat COM8 ..\K210_AI_V7s_Plus
+```
+
+Fast repeat after the first full test already configured the build folder:
+
+```bat
+cd /d D:\w_spase\AI\K210_AI_V7s_Plus_Boot
+git switch main
+git pull
+quick_boot_spi_iter.bat COM8 45
+```
+
+Expected successful read/load log markers:
+
+```text
+BOOT_SPI3_CLK ... sck=65000000
+BOOT_SPI_JEDEC ...
+BOOT_SPI_STATUS ... qe=1
+BOOT_QUAD_DIRECT ... mode=quad-dma32...
+BOOT_LOAD_DMA_DONE ...
+BOOT_LOAD_BSWAP_DONE ...
+BOOT_LOAD_DONE mode=quad-dma32-bswap-separated ...
+```
