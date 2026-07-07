@@ -8,7 +8,6 @@
 #include <filesystem.h>
 #include <ff.h>
 #include <platform.h>
-#include <spi.h>
 #include <stdint.h>
 #include <stdbool.h>
 #include <stdio.h>
@@ -26,39 +25,14 @@
 
 #define UARTHS_RXDATA_EMPTY_MASK     (1u << 31)
 
-#define SPI3_CS_MASK                 0x01u
-#define SPI3_WRITE_ENABLE_CMD        0x06u
-#define SPI3_READ_SR1_CMD            0x05u
-#define SPI3_SECTOR_ERASE_4K_CMD     0x20u
-#define SPI3_PAGE_PROGRAM_CMD        0x02u
-#define SPI3_WIP_MASK                0x01u
-#define SPI3_TIMEOUT                 100000u
-#define SPI3_WIP_TIMEOUT             8000000u
-
-#define SPI3_SR_BUSY                 0x01u
-#define SPI3_SR_TFNF                 0x02u
-#define SPI3_SR_TFE                  0x04u
-#define SPI3_SR_RFNE                 0x08u
-
-#define SPI3_MOD_OFF                 8u
-#define SPI3_DFS_OFF                 0u
-#define SPI3_TMOD_OFF                10u
-#define SPI3_FRF_OFF                 22u
-
-#define SPI_CTRL_FRAME_STD           (0u << SPI3_FRF_OFF)
-#define SPI_CTRL_MODE0               (0u << SPI3_MOD_OFF)
-#define SPI_CTRL_DFS8                (7u << SPI3_DFS_OFF)
-#define SPI_TMOD_TX_RX               0u
-#define SPI_TMOD_TX_ONLY             1u
-#define SPI_TMOD_EEPROM_READ         3u
-
-#define SPI3_CLK_SELECT_PLL0         1u
-#define SPI3_CLK_THRESHOLD           2u
-#define SPI3_BAUDR_SLOW              8u
-#define SPI3_ENDIAN_NORMAL           0u
+/* These command-mode write helpers are implemented in boot_spi3_rw.c.  Keep
+ * them out of boot_flash_read(), because the normal boot image read path uses
+ * quad-DMA plus 32-bit byte swapping and is not suitable for byte verify. */
+int boot_flash_read_raw(uint32_t flash_offset, void *dst, uint32_t len);
+int boot_flash_sector_4k(uint32_t flash_offset);
+int boot_flash_program_page(uint32_t flash_offset, const void *src, uint32_t len);
 
 static volatile uarths_t *const REG_UARTHS = (volatile uarths_t *)UARTHS_BASE_ADDR;
-static volatile spi_t *const SPI3 = (volatile spi_t *)SPI3_BASE_ADDR;
 static uint8_t s_buf[BOOT_CMD_BUF] __attribute__((aligned(64)));
 static uint8_t s_verify[BOOT_CMD_BUF] __attribute__((aligned(64)));
 
@@ -208,199 +182,6 @@ static bool sd_rw_probe(void)
     return memcmp(wr, rd, sizeof(wr)) == 0;
 }
 
-static void spi3_flush_rx(void)
-{
-    for (uint32_t n = 0; n < 128u; n++) {
-        if ((SPI3->sr & SPI3_SR_RFNE) == 0)
-            break;
-        (void)SPI3->dr[0];
-    }
-}
-
-static int spi3_wait_mask(uint32_t mask, uint32_t value)
-{
-    for (uint32_t n = 0; n < SPI3_TIMEOUT; ++n) {
-        if ((SPI3->sr & mask) == value)
-            return 0;
-    }
-    return -1;
-}
-
-static void spi3_deassert(void)
-{
-    SPI3->ser = 0;
-    (void)spi3_wait_mask(SPI3_SR_BUSY, 0);
-    SPI3->dmacr = 0;
-    SPI3->ssienr = 0;
-    spi3_flush_rx();
-}
-
-static void spi3_std_init(void)
-{
-    sysctl_clock_set_clock_select(SYSCTL_CLOCK_SELECT_SPI3, SPI3_CLK_SELECT_PLL0);
-    sysctl_clock_set_threshold(SYSCTL_THRESHOLD_SPI3, SPI3_CLK_THRESHOLD);
-    sysctl_clock_enable(SYSCTL_CLOCK_SPI3);
-
-    SPI3->ssienr = 0;
-    SPI3->ser = 0;
-    SPI3->baudr = SPI3_BAUDR_SLOW;
-    SPI3->imr = 0;
-    SPI3->dmacr = 0;
-    SPI3->dmatdlr = 0x10;
-    SPI3->dmardlr = 0;
-    SPI3->rx_sample_delay = 0;
-    SPI3->endian = SPI3_ENDIAN_NORMAL;
-    SPI3->spi_ctrlr0 = 0;
-    SPI3->ctrlr0 = SPI_CTRL_MODE0 | SPI_CTRL_FRAME_STD | SPI_CTRL_DFS8;
-    (void)SPI3->icr;
-    spi3_flush_rx();
-}
-
-static int spi3_tx(const uint8_t *tx, uint32_t tx_len)
-{
-    if (!tx || tx_len == 0)
-        return -1;
-
-    spi3_std_init();
-    (void)spi3_wait_mask(SPI3_SR_BUSY, 0);
-    SPI3->ssienr = 0;
-    SPI3->spi_ctrlr0 = 0;
-    SPI3->ctrlr0 = SPI_CTRL_MODE0 | SPI_CTRL_FRAME_STD | SPI_CTRL_DFS8 |
-                   (SPI_TMOD_TX_ONLY << SPI3_TMOD_OFF);
-    SPI3->ssienr = 1;
-
-    for (uint32_t i = 0; i < tx_len; i++) {
-        if (spi3_wait_mask(SPI3_SR_TFNF, SPI3_SR_TFNF) != 0) {
-            spi3_deassert();
-            return -2;
-        }
-        SPI3->dr[0] = tx[i];
-    }
-
-    SPI3->ser = SPI3_CS_MASK;
-    if (spi3_wait_mask(SPI3_SR_TFE, SPI3_SR_TFE) != 0) {
-        spi3_deassert();
-        return -3;
-    }
-    if (spi3_wait_mask(SPI3_SR_BUSY, 0) != 0) {
-        spi3_deassert();
-        return -4;
-    }
-    spi3_deassert();
-    return 0;
-}
-
-static int spi3_eeprom_read(const uint8_t *cmd, uint32_t cmd_len, uint8_t *rx, uint32_t rx_len)
-{
-    uint32_t got = 0;
-    if (!cmd || !cmd_len || (!rx && rx_len))
-        return -1;
-    if (rx_len == 0)
-        return 0;
-
-    spi3_std_init();
-    (void)spi3_wait_mask(SPI3_SR_BUSY, 0);
-    SPI3->ssienr = 0;
-    SPI3->spi_ctrlr0 = 0;
-    SPI3->ctrlr0 = SPI_CTRL_MODE0 | SPI_CTRL_FRAME_STD | SPI_CTRL_DFS8 |
-                   (SPI_TMOD_EEPROM_READ << SPI3_TMOD_OFF);
-    SPI3->ctrlr1 = rx_len - 1u;
-    SPI3->ssienr = 1;
-
-    for (uint32_t i = 0; i < cmd_len; ++i) {
-        if (spi3_wait_mask(SPI3_SR_TFNF, SPI3_SR_TFNF) != 0) {
-            spi3_deassert();
-            return -2;
-        }
-        SPI3->dr[0] = cmd[i];
-    }
-
-    SPI3->ser = SPI3_CS_MASK;
-    while (got < rx_len) {
-        uint32_t progressed = 0;
-        for (uint32_t n = 0; n < SPI3_TIMEOUT; ++n) {
-            while ((SPI3->sr & SPI3_SR_RFNE) && got < rx_len) {
-                rx[got++] = (uint8_t)SPI3->dr[0];
-                progressed = 1;
-            }
-            if (progressed)
-                break;
-        }
-        if (!progressed) {
-            spi3_deassert();
-            return -3;
-        }
-    }
-
-    spi3_deassert();
-    return 0;
-}
-
-static int spi3_read_sr1(uint8_t *sr1)
-{
-    uint8_t cmd = SPI3_READ_SR1_CMD;
-    if (!sr1)
-        return -1;
-    *sr1 = 0xffu;
-    return spi3_eeprom_read(&cmd, 1, sr1, 1);
-}
-
-static int spi3_wait_wip_clear(void)
-{
-    for (uint32_t n = 0; n < SPI3_WIP_TIMEOUT; n++) {
-        uint8_t sr1 = 0xffu;
-        if (spi3_read_sr1(&sr1) != 0)
-            return -1;
-        if ((sr1 & SPI3_WIP_MASK) == 0)
-            return 0;
-        if ((n & 0x3ffu) == 0)
-            taskYIELD();
-    }
-    return -2;
-}
-
-static int spi3_write_enable(void)
-{
-    uint8_t cmd = SPI3_WRITE_ENABLE_CMD;
-    return spi3_tx(&cmd, 1);
-}
-
-static int spi3_sector_erase_4k(uint32_t offset)
-{
-    uint8_t cmd[4] = {
-        SPI3_SECTOR_ERASE_4K_CMD,
-        (uint8_t)((offset >> 16) & 0xffu),
-        (uint8_t)((offset >> 8) & 0xffu),
-        (uint8_t)(offset & 0xffu)
-    };
-    int rc = spi3_write_enable();
-    if (rc != 0)
-        return -10 + rc;
-    rc = spi3_tx(cmd, sizeof(cmd));
-    if (rc != 0)
-        return -20 + rc;
-    return spi3_wait_wip_clear();
-}
-
-static int spi3_page_program(uint32_t offset, const uint8_t *data, uint32_t len)
-{
-    if (!data || len == 0 || len > 256u)
-        return -1;
-    s_buf[0] = SPI3_PAGE_PROGRAM_CMD;
-    s_buf[1] = (uint8_t)((offset >> 16) & 0xffu);
-    s_buf[2] = (uint8_t)((offset >> 8) & 0xffu);
-    s_buf[3] = (uint8_t)(offset & 0xffu);
-    memcpy(&s_buf[4], data, len);
-
-    int rc = spi3_write_enable();
-    if (rc != 0)
-        return -10 + rc;
-    rc = spi3_tx(s_buf, len + 4u);
-    if (rc != 0)
-        return -20 + rc;
-    return spi3_wait_wip_clear();
-}
-
 static bool spi3_rw_probe(uint32_t offset, char *detail, size_t detail_size)
 {
     if ((offset & 0xfffu) != 0) {
@@ -412,19 +193,19 @@ static bool spi3_rw_probe(uint32_t offset, char *detail, size_t detail_size)
         s_buf[i] = (uint8_t)((i * 17u + 0x5au) & 0xffu);
     memset(s_verify, 0, BOOT_SPI3_SCRATCH_SIZE);
 
-    int rc = spi3_sector_erase_4k(offset);
+    int rc = boot_flash_sector_4k(offset);
     if (rc != 0) {
         snprintf(detail, detail_size, "erase-rc=%d", rc);
         return false;
     }
 
-    rc = spi3_page_program(offset, s_buf, BOOT_SPI3_SCRATCH_SIZE);
+    rc = boot_flash_program_page(offset, s_buf, BOOT_SPI3_SCRATCH_SIZE);
     if (rc != 0) {
         snprintf(detail, detail_size, "prog-rc=%d", rc);
         return false;
     }
 
-    rc = boot_flash_read(offset, s_verify, BOOT_SPI3_SCRATCH_SIZE);
+    rc = boot_flash_read_raw(offset, s_verify, BOOT_SPI3_SCRATCH_SIZE);
     if (rc != 0) {
         snprintf(detail, detail_size, "read-rc=%d", rc);
         return false;
