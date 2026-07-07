@@ -117,10 +117,29 @@ def patch_sdcard_cpp() -> int:
     return changed
 
 
+def patch_boot_cmd_c() -> int:
+    path = ROOT / "src" / "boot_cmd.c"
+    if not path.exists():
+        raise SystemExit(f"PATCH_FAIL missing {path}")
+    changed = 0
+    changed += int(replace_one(
+        path,
+        "static uint8_t s_verify[BOOT_CMD_BUF] __attribute__((aligned(64)));\n",
+        "static uint8_t s_verify[BOOT_CMD_BUF] __attribute__((aligned(64)));\n\nextern void boot_sdk_install_drivers_once(void);\n",
+    ))
+    changed += int(replace_one(
+        path,
+        "static bool sd_rw_probe(void)\n{\n    if (!sd_mount())",
+        "static bool sd_rw_probe(void)\n{\n    host_puts(\"KBOOT:SD_SDK_INIT\\n\");\n    boot_sdk_install_drivers_once();\n    host_puts(\"KBOOT:SD_SDK_INIT_OK\\n\");\n\n    if (!sd_mount())",
+    ))
+    return changed
+
+
 def main() -> int:
     changed_spi = patch_spi_cpp()
     changed_sd = patch_sdcard_cpp()
-    print(f"BOOT_SDK_DMA_PATCH_OK spi_changes={changed_spi} sd_changes={changed_sd}")
+    changed_cmd = patch_boot_cmd_c()
+    print(f"BOOT_SDK_DMA_PATCH_OK spi_changes={changed_spi} sd_changes={changed_sd} cmd_changes={changed_cmd}")
     return 0
 
 
