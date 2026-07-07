@@ -13,6 +13,10 @@ except Exception as exc:
 def read_line(ser, deadline):
     buf = bytearray()
     while time.time() < deadline:
+        waiting = getattr(ser, "in_waiting", 0)
+        if not waiting:
+            time.sleep(0.01)
+            continue
         b = ser.read(1)
         if not b:
             continue
@@ -88,7 +92,7 @@ def main():
     print(f"Baud: {baud}")
     print(f"Timeout: {timeout}s")
 
-    with serial.Serial(port, baudrate=baud, timeout=0.05) as ser:
+    with serial.Serial(port, baudrate=baud, timeout=0, write_timeout=1) as ser:
         ser.dtr = False
         ser.rts = False
         time.sleep(0.2)
