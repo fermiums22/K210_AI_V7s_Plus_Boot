@@ -31,7 +31,7 @@ echo Boot branch: %BOOT_BRANCH%
 echo App repo for SDK sync only: %APP_REPO%
 echo.
 
-echo [1/4] SDK sync check, no app build/flash
+echo [1/5] SDK sync check, no app build/flash
 if /I "%FORCE_SYNC%"=="--sync" goto do_sync
 if not exist "lib\hal" goto do_sync
 if not exist "third_party\fatfs" goto do_sync
@@ -44,16 +44,20 @@ call bootstrap_from_app.bat "%APP_REPO%" || exit /b 1
 
 :sync_done
 echo.
-echo [2/4] Build boot only, force boot command mode
+echo [2/5] Patch copied SDK SPI/SD DMA path
+py -3 tools\patch_boot_sdk_dma.py || exit /b 11
+
+echo.
+echo [3/5] Build boot only, force boot command mode
 set "BOOT_SLOT_PROBE=0"
 call build_boot.bat || exit /b 2
 set "BOOT_SLOT_PROBE="
 
 echo.
-echo [3/4] Flash boot only
+echo [4/5] Flash boot only
 call flash_boot.bat %PORT% --no-build --no-monitor --baud 1500000 || exit /b 3
 
 echo.
-echo [4/4] Run boot command smoke: SD + SPI3 ID/read/write
+echo [5/5] Run boot command smoke: SD + SPI3 ID/read/write
 py -3 tools\boot_cmd_smoke.py %PORT% 115200 45
 exit /b %ERRORLEVEL%
