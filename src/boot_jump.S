@@ -44,6 +44,12 @@ boot_jump_to_app:
     csrw mip, zero
     csrw mtvec, a0
     mv t0, a0
+
+    /* The app image has just been copied into executable SRAM.
+     * Make data writes visible to instruction fetch before jumping. */
+    fence
+    fence.i
+
     li ra, 0
     li sp, 0
     jr t0
