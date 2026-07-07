@@ -44,9 +44,7 @@ call bootstrap_from_app.bat "%APP_REPO%" || exit /b 1
 
 :sync_done
 echo.
-echo [2/4] Restore safe source tree and apply SPI3 TX fix
-git checkout -- src\boot_cmd.c lib\bsp\device\spi.cpp lib\drivers\src\storage\sdcard.cpp 2>nul
-py -3 tools\patch_boot_spi3_tx.py || exit /b 11
+echo [2/4] Using committed SPI3 command-mode source code
 
 echo.
 echo [3/4] Build boot only, force boot command mode
