@@ -4,32 +4,68 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def write_if_changed(path: Path, old_text: str, new_text: str) -> bool:
+    if old_text != new_text:
+        path.write_text(new_text, encoding="utf-8")
+        return True
+    return False
+
+
+def cleanup_duplicates(path: Path) -> int:
+    text = path.read_text(encoding="utf-8")
+    before = text
+    duplicate_pairs = [
+        (
+            "        spi32_dev_ = make_accessor(spi->get_device(SPI_MODE_0, SPI_FF_STANDARD, 1, 32));\n"
+            "        spi32_dev_ = make_accessor(spi->get_device(SPI_MODE_0, SPI_FF_STANDARD, 1, 32));",
+            "        spi32_dev_ = make_accessor(spi->get_device(SPI_MODE_0, SPI_FF_STANDARD, 1, 32));",
+        ),
+        (
+            "        spi32_dev_.reset();\n"
+            "        spi32_dev_.reset();",
+            "        spi32_dev_.reset();",
+        ),
+        (
+            "    object_accessor<spi_device_driver> spi32_dev_;\n"
+            "    object_accessor<spi_device_driver> spi32_dev_;",
+            "    object_accessor<spi_device_driver> spi32_dev_;",
+        ),
+    ]
+    changed = 0
+    for old, new in duplicate_pairs:
+        while old in text:
+            text = text.replace(old, new)
+            changed += 1
+    if write_if_changed(path, before, text):
+        return changed
+    return 0
+
+
 def replace_one(path: Path, old: str, new: str) -> bool:
     text = path.read_text(encoding="utf-8")
-    if old in text:
-        path.write_text(text.replace(old, new, 1), encoding="utf-8")
-        return True
     if new in text:
         return False
-    raise SystemExit(f"PATCH_FAIL {path}: pattern not found")
+    if old not in text:
+        raise SystemExit(f"PATCH_FAIL {path}: pattern not found")
+    return write_if_changed(path, text, text.replace(old, new, 1))
 
 
 def replace_all(path: Path, old: str, new: str) -> int:
     text = path.read_text(encoding="utf-8")
-    n = text.count(old)
-    if n:
-        path.write_text(text.replace(old, new), encoding="utf-8")
-        return n
-    if new in text:
+    if new in text and old not in text:
         return 0
-    raise SystemExit(f"PATCH_FAIL {path}: pattern not found")
+    n = text.count(old)
+    if not n:
+        raise SystemExit(f"PATCH_FAIL {path}: pattern not found")
+    write_if_changed(path, text, text.replace(old, new))
+    return n
 
 
 def patch_spi_cpp() -> int:
     path = ROOT / "lib" / "bsp" / "device" / "spi.cpp"
     if not path.exists():
         raise SystemExit(f"PATCH_FAIL missing {path}")
-    changed = 0
+    changed = cleanup_duplicates(path)
     changed += int(replace_one(
         path,
         "#define SPI_TRANSMISSION_THRESHOLD 0x800UL",
@@ -52,7 +88,7 @@ def patch_sdcard_cpp() -> int:
     path = ROOT / "lib" / "drivers" / "src" / "storage" / "sdcard.cpp"
     if not path.exists():
         raise SystemExit(f"PATCH_FAIL missing {path}")
-    changed = 0
+    changed = cleanup_duplicates(path)
     changed += int(replace_one(
         path,
         "        spi8_dev_ = make_accessor(spi->get_device(SPI_MODE_0, SPI_FF_STANDARD, 1, 8));\n\n        cs_gpio_ = make_accessor(cs_gpio_driver_);",
