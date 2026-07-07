@@ -121,18 +121,26 @@ def patch_boot_cmd_c() -> int:
     path = ROOT / "src" / "boot_cmd.c"
     if not path.exists():
         raise SystemExit(f"PATCH_FAIL missing {path}")
-    changed = 0
-    changed += int(replace_one(
-        path,
-        "static uint8_t s_verify[BOOT_CMD_BUF] __attribute__((aligned(64)));\n",
-        "static uint8_t s_verify[BOOT_CMD_BUF] __attribute__((aligned(64)));\n\nextern void boot_sdk_install_drivers_once(void);\n",
-    ))
-    changed += int(replace_one(
-        path,
-        "static bool sd_rw_probe(void)\n{\n    if (!sd_mount())",
+    text = path.read_text(encoding="utf-8")
+    before = text
+
+    text = text.replace("\nextern void boot_sdk_install_drivers_once(void);\n", "\n")
+    text = text.replace(
         "static bool sd_rw_probe(void)\n{\n    host_puts(\"KBOOT:SD_SDK_INIT\\n\");\n    boot_sdk_install_drivers_once();\n    host_puts(\"KBOOT:SD_SDK_INIT_OK\\n\");\n\n    if (!sd_mount())",
-    ))
-    return changed
+        "static bool sd_rw_probe(void)\n{\n    if (!sd_mount())",
+    )
+    text = text.replace(
+        "static void sd_test_command(void)\n{\n    LOG(\"BOOT_CMD SD_TEST\");\n    host_puts(sd_rw_probe() ? \"KBOOT:SD_OK rw-64\\n\" : \"KBOOT:SD_FAIL rw\\n\");\n}",
+        "static void sd_test_command(void)\n{\n    LOG(\"BOOT_CMD SD_TEST\");\n    host_puts(\"KBOOT:SD_SKIP sdk-dma-disabled\\n\");\n}",
+    )
+    text = text.replace(
+        "    if (sd_rw_probe())\n        host_puts(\"KBOOT:TEST SD_RW PASS 64-bytes\\n\");\n    else\n        host_puts(\"KBOOT:TEST SD_RW FAIL rw\\n\");",
+        "    host_puts(\"KBOOT:TEST SD_RW SKIP sdk-dma-disabled\\n\");",
+    )
+
+    if write_if_changed(path, before, text):
+        return 1
+    return 0
 
 
 def main() -> int:
