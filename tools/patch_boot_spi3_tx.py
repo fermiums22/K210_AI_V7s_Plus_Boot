@@ -23,6 +23,7 @@ int boot_flash_load_app_image(const boot_app_header_t *hdr);
 uint32_t boot_flash_read_jedec_id(void);
 """
     new = """int boot_flash_read(uint32_t flash_offset, void *dst, uint32_t len);
+int boot_flash_read_raw(uint32_t flash_offset, void *dst, uint32_t len);
 int boot_flash_read_app_header(uint32_t slot_offset, boot_app_header_t *out);
 int boot_flash_load_app_image(const boot_app_header_t *hdr);
 uint32_t boot_flash_read_jedec_id(void);
@@ -38,6 +39,7 @@ int boot_flash_program(uint32_t flash_offset, const void *src, uint32_t len);
 
 def patch_flash_c() -> int:
     text = BOOT_FLASH_C.read_text(encoding="utf-8")
+    changed = 0
 
     replacements = [
         ("""#define SPI3_READ_SR1_CMD     0x05u
@@ -81,7 +83,6 @@ def patch_flash_c() -> int:
 """, "boot_flash.c write baud"),
     ]
 
-    changed = 0
     for old, new, label in replacements:
         text, n = replace_once(text, old, new, label)
         changed += n
@@ -112,12 +113,12 @@ def patch_flash_c() -> int:
     spi3_flush_rx_bounded();
 }
 
-static int spi3_std_tx_stream(const uint8_t *tx, uint32_t tx_len)
+static int spi3_std_tx_only(const uint8_t *tx, uint32_t tx_len)
 {
     if (!tx || tx_len == 0)
         return -1;
 
-    spi3_prepare_std(SPI_TMOD_TX_RX, SPI3_BAUDR_WRITE);
+    spi3_prepare_std(SPI_TMOD_TX_ONLY, SPI3_BAUDR_WRITE);
     SPI3->ssienr = 1;
     SPI3->ser = SPI3_CS_MASK;
 
@@ -127,11 +128,6 @@ static int spi3_std_tx_stream(const uint8_t *tx, uint32_t tx_len)
             return -2;
         }
         SPI3->dr[0] = tx[i];
-        if (spi3_wait_mask(SPI3_SR_RFNE, SPI3_SR_RFNE) != 0) {
-            spi3_deassert();
-            return -5;
-        }
-        (void)SPI3->dr[0];
     }
 
     if (spi3_wait_mask(SPI3_SR_TFE, SPI3_SR_TFE) != 0) {
@@ -156,7 +152,7 @@ static int spi3_flash_write_enable(void)
 {
     uint8_t cmd = SPI3_WRITE_ENABLE_CMD;
     uint8_t sr1 = 0xffu;
-    int rc = spi3_std_tx_stream(&cmd, 1);
+    int rc = spi3_std_tx_only(&cmd, 1);
     if (rc != 0)
         return -10 + rc;
 
@@ -200,6 +196,28 @@ static int spi3_flash_wait_wip_clear(const char *tag)
         text = text.replace(helper_marker, helper_code + helper_marker, 1)
         changed += 1
 
+    read_api_marker = """int boot_flash_read(uint32_t flash_offset, void *dst, uint32_t len)
+{
+    int rc;
+    rc = boot_flash_read_dma32_raw(flash_offset, dst, len);
+    if (rc != 0)
+        return rc;
+    boot_bswap32_buffer(dst, len);
+    return 0;
+}
+"""
+    read_api_new = read_api_marker + r'''
+int boot_flash_read_raw(uint32_t flash_offset, void *dst, uint32_t len)
+{
+    /* Raw bytes from flash: no boot-loader bswap32 post-processing.  Use this
+     * for write/verify tests; boot_flash_read() is for app image/header data.
+     */
+    return boot_flash_read_dma32_raw(flash_offset, dst, len);
+}
+'''
+    text, n = replace_once(text, read_api_marker, read_api_new, "boot_flash.c raw read api")
+    changed += n
+
     api_marker = """uint32_t boot_flash_read_jedec_id(void)
 """
     api_code = r'''int boot_flash_read_status(uint8_t *sr1, uint8_t *sr2)
@@ -238,8 +256,8 @@ int boot_flash_erase_4k(uint32_t flash_offset)
     if (rc != 0)
         return -10 + rc;
 
-    rc = spi3_std_tx_stream(cmd, sizeof(cmd));
-    LOGF("BOOT_SPI3_ERASE_TX off=0x%08lx rc=%d", (unsigned long)flash_offset, rc);
+    rc = spi3_std_tx_only(cmd, sizeof(cmd));
+    LOGF("BOOT_SPI3_ERASE_TX_ONLY off=0x%08lx rc=%d", (unsigned long)flash_offset, rc);
     if (rc != 0)
         return -20 + rc;
 
@@ -270,8 +288,8 @@ int boot_flash_program(uint32_t flash_offset, const void *src, uint32_t len)
     if (rc != 0)
         return -10 + rc;
 
-    rc = spi3_std_tx_stream(cmd, len + 4u);
-    LOGF("BOOT_SPI3_PROG_TX_STREAM off=0x%08lx len=%lu rc=%d",
+    rc = spi3_std_tx_only(cmd, len + 4u);
+    LOGF("BOOT_SPI3_PROG_TX_ONLY off=0x%08lx len=%lu rc=%d",
          (unsigned long)flash_offset, (unsigned long)len, rc);
     if (rc != 0)
         return -20 + rc;
@@ -322,7 +340,7 @@ def patch_boot_cmd() -> int:
         return false;
     }
 
-    rc = boot_flash_read(offset, s_verify, BOOT_SPI3_SCRATCH_SIZE);
+    rc = boot_flash_read_raw(offset, s_verify, BOOT_SPI3_SCRATCH_SIZE);
 """
     text, changed = replace_once(text, old, new, "boot_cmd.c spi3 rw api calls")
     if changed:
