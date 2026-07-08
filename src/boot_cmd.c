@@ -199,11 +199,11 @@ static void sd_normalize_path(const char *arg, char *out, size_t out_size)
     if (strncmp(path, "/fs/", 4) == 0) {
         snprintf(out, out_size, "%s", path);
     } else if (strncmp(path, "0:/", 3) == 0) {
-        snprintf(out, out_size, "/fs/0/%s", path + 3);
+        snprintf(out, out_size, "/fs/%s", path + 3);
     } else if (path[0] == '/') {
-        snprintf(out, out_size, "/fs/0%s", path);
+        snprintf(out, out_size, "/fs%s", path);
     } else {
-        snprintf(out, out_size, "/fs/0/%s", path);
+        snprintf(out, out_size, "/fs/%s", path);
     }
 }
 
@@ -586,9 +586,91 @@ static void sd_flash_command(const char *line)
                 (unsigned long)verify);
 }
 
+static void flash_sd_command(const char *line)
+{
+    char off_s[32] = {0};
+    char len_s[32] = {0};
+    char raw_path[128] = BOOT_SD_DEFAULT_PATH;
+    char fs_path[160];
+    uint32_t flash_off;
+    uint32_t len;
+    uint32_t copied = 0;
+    TickType_t start;
+
+    if (sscanf(line, "FLASH_SD %31s %31s %127s", off_s, len_s, raw_path) < 3) {
+        host_puts("KBOOT:FLASH_SD_FAIL args\n");
+        return;
+    }
+
+    flash_off = parse_u32_token(off_s, 0);
+    len = parse_u32_token(len_s, 0);
+    if ((flash_off & 0xfffu) != 0 || len == 0) {
+        host_printf("KBOOT:FLASH_SD_FAIL bad-args off=0x%08lx len=%lu\n",
+                    (unsigned long)flash_off, (unsigned long)len);
+        return;
+    }
+
+    sd_normalize_path(raw_path, fs_path, sizeof(fs_path));
+    LOGF("BOOT_CMD FLASH_SD off=0x%08lx len=%lu path=%s",
+         (unsigned long)flash_off, (unsigned long)len, fs_path);
+    host_printf("KBOOT:FLASH_SD_BEGIN off=0x%08lx len=%lu file=%s chunk=%lu\n",
+                (unsigned long)flash_off, (unsigned long)len, raw_path,
+                (unsigned long)sizeof(s_buf));
+
+    if (!sd_mount_debug()) {
+        host_puts("KBOOT:FLASH_SD_FAIL mount\n");
+        return;
+    }
+
+    host_printf("KBOOT:SD_OPEN_BEGIN path=%s mode=write\n", fs_path);
+    handle_t f = filesystem_file_open(fs_path, FILE_ACCESS_WRITE, FILE_MODE_CREATE_ALWAYS);
+    if (!f) {
+        host_printf("KBOOT:SD_OPEN_RESULT ok=0 path=%s\n", fs_path);
+        host_puts("KBOOT:FLASH_SD_FAIL open\n");
+        return;
+    }
+    host_printf("KBOOT:SD_OPEN_RESULT ok=1 path=%s\n", fs_path);
+
+    start = xTaskGetTickCount();
+    while (copied < len) {
+        uint32_t ask = len - copied;
+        int rc;
+        int wr;
+
+        if (ask > sizeof(s_buf))
+            ask = sizeof(s_buf);
+
+        rc = boot_flash_read_raw(flash_off + copied, s_buf, ask);
+        if (rc != 0) {
+            filesystem_file_close(f);
+            host_printf("KBOOT:FLASH_SD_FAIL flash-read off=0x%08lx rc=%d\n",
+                        (unsigned long)(flash_off + copied), rc);
+            return;
+        }
+
+        wr = filesystem_file_write(f, s_buf, ask);
+        if (wr != (int)ask) {
+            filesystem_file_close(f);
+            host_printf("KBOOT:FLASH_SD_FAIL sd-write copied=%lu wr=%d ask=%lu\n",
+                        (unsigned long)copied, wr, (unsigned long)ask);
+            return;
+        }
+
+        copied += ask;
+        if ((copied % BOOT_SD_FLASH_PROGRESS_STEP) == 0 || copied == len)
+            host_printf("KBOOT:FLASH_SD_PROGRESS bytes=%lu ms=%lu\n",
+                        (unsigned long)copied, (unsigned long)elapsed_ms(start));
+    }
+
+    filesystem_file_close(f);
+    host_printf("KBOOT:FLASH_SD_OK file=%s off=0x%08lx bytes=%lu ms=%lu\n",
+                raw_path, (unsigned long)flash_off, (unsigned long)copied,
+                (unsigned long)elapsed_ms(start));
+}
+
 static void help_command(void)
 {
-    host_puts("KBOOT:HELP HELP SELFTEST SPI3_ID SPI3_READ <off> <len> SPI3_RW [off] SD_MOUNT SD_READ [path] [len] SD_TEST SD_FLASH [path] [off] [max_len] [verify] RESET DONE\n");
+    host_puts("KBOOT:HELP HELP SELFTEST SPI3_ID SPI3_READ <off> <len> SPI3_RW [off] SD_MOUNT SD_LS SD_READ [path] [len] SD_TEST SD_FLASH [path] [off] [max_len] [verify] FLASH_SD <off> <len> <path> RESET DONE\n");
     host_puts("KBOOT:HELP sd-default=0:/app_slot0.bin sd-read-max=512 sd-flash-default-off=0x00100000\n");
     host_puts("KBOOT:HELP sd-flash-max_len=0 means until EOF, verify=0 fastest, verify=1 readback-check\n");
     host_puts("KBOOT:HELP scratch-default=0x00F00000 rw-erases-4k-sector\n");
@@ -601,6 +683,33 @@ static void sd_test_command(void)
     host_puts("KBOOT:SD_DEBUG_BEGIN op=rw-test\n");
     host_puts(sd_rw_probe() ? "KBOOT:SD_OK rw-64\n" : "KBOOT:SD_FAIL rw\n");
     host_puts("KBOOT:SD_DEBUG_END op=rw-test\n");
+}
+
+static void sd_ls_command(void)
+{
+    find_find_data_t fd;
+
+    LOG("BOOT_CMD SD_LS");
+    host_puts("KBOOT:SD_DEBUG_BEGIN op=ls\n");
+    if (!sd_mount_debug()) {
+        host_puts("KBOOT:SD_LS_FAIL mount\n");
+        host_puts("KBOOT:SD_DEBUG_END op=ls\n");
+        return;
+    }
+
+    handle_t h = filesystem_find_first("/fs/0/", "*", &fd);
+    if (!h) {
+        host_puts("KBOOT:SD_LS_EMPTY\n");
+        host_puts("KBOOT:SD_DEBUG_END op=ls\n");
+        return;
+    }
+
+    do {
+        host_printf("KBOOT:SD_LS_ENTRY %s\n", fd.filename);
+    } while (filesystem_find_next(h, &fd));
+    filesystem_find_close(h);
+    host_puts("KBOOT:SD_LS_OK\n");
+    host_puts("KBOOT:SD_DEBUG_END op=ls\n");
 }
 
 static void spi3_id_command(void)
@@ -702,7 +811,9 @@ static void command_loop(void)
         if (strcmp(line, "HELP") == 0) { help_command(); continue; }
         if (strcmp(line, "SELFTEST") == 0) { selftest_command(); continue; }
         if (strcmp(line, "SD_MOUNT") == 0) { sd_mount_command(); continue; }
+        if (strcmp(line, "SD_LS") == 0) { sd_ls_command(); continue; }
         if (strncmp(line, "SD_FLASH", 8) == 0) { sd_flash_command(line); continue; }
+        if (strncmp(line, "FLASH_SD", 8) == 0) { flash_sd_command(line); continue; }
         if (strncmp(line, "SD_READ", 7) == 0) { sd_read_command(line); continue; }
         if (strcmp(line, "SD_TEST") == 0) { sd_test_command(); continue; }
         if (strcmp(line, "SPI3_ID") == 0) { spi3_id_command(); continue; }

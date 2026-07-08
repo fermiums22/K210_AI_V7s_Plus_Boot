@@ -134,6 +134,8 @@ def command_ok(cmd, lines):
         return any(line == "KBOOT:SD_READ_OK" for line in lines)
     if name == "SD_FLASH":
         return any(line.startswith("KBOOT:SD_FLASH_OK") for line in lines)
+    if name == "FLASH_SD":
+        return any(line.startswith("KBOOT:FLASH_SD_OK") for line in lines)
     if name == "SPI3_ID":
         return any(line.startswith("KBOOT:SPI3_ID 0x") and not line.endswith("ffffffff") for line in lines)
     if name == "SPI3_RW":
@@ -148,7 +150,7 @@ def command_ok(cmd, lines):
 
 def command_timeout(cmd, base_timeout):
     name = cmd.split()[0].upper() if cmd.split() else ""
-    if name == "SD_FLASH":
+    if name in ("SD_FLASH", "FLASH_SD"):
         return max(base_timeout, 240)
     return max(30, min(base_timeout, 60))
 
