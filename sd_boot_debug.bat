@@ -24,11 +24,13 @@ if "%BOOT_BRANCH%"=="" (
   echo ERROR: boot repo is not on a branch
   exit /b 10
 )
+for /f "delims=" %%H in ('git rev-parse --short HEAD') do set "BOOT_HEAD=%%H"
 
 echo === K210 BOOT SD DEBUG ===
 echo Port: %PORT%
 echo Boot repo: %BOOT_REPO%
 echo Boot branch: %BOOT_BRANCH%
+echo Boot head: %BOOT_HEAD%
 echo App repo for SDK sync only: %APP_REPO%
 echo SD command: %SD_CMD%
 echo.
@@ -56,5 +58,5 @@ call flash_boot.bat %PORT% --no-build --no-monitor --baud 1500000 || exit /b 3
 
 echo.
 echo [4/4] Run isolated SD debug command
-py -3 tools\boot_cmd_sd_debug.py %PORT% 115200 45 "%SD_CMD%"
+py -3 tools\boot_cmd_sd_debug.py %PORT% 115200 240 "%SD_CMD%"
 exit /b %ERRORLEVEL%
