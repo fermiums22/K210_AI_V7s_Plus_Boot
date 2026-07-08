@@ -1,0 +1,11 @@
+build/
+cmake/
+lds/
+lib/
+third_party/
+src/log.c
+src/log.h
+src/pinout.h
+src/sd.c
+src/sd.h
+*.log
