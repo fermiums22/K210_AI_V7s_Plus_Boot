@@ -81,12 +81,25 @@ def command_ok(cmd, lines):
         return any(line == "KBOOT:SD_MOUNT_RESULT ok=1" for line in lines)
     if name == "SD_READ":
         return any(line == "KBOOT:SD_READ_OK" for line in lines)
+    if name == "SD_FLASH":
+        return any(line.startswith("KBOOT:SD_FLASH_OK") for line in lines)
+    if name == "SPI3_ID":
+        return any(line.startswith("KBOOT:SPI3_ID 0x") and not line.endswith("ffffffff") for line in lines)
+    if name == "SPI3_RW":
+        return any(line.startswith("KBOOT:SPI3_RW_OK") for line in lines)
     if name == "SD_TEST":
         return any(line == "KBOOT:SD_OK rw-64" for line in lines)
     if name == "HELP":
         return any(line.startswith("KBOOT:HELP") for line in lines)
 
     return not any("FAIL" in line for line in lines)
+
+
+def command_timeout(cmd, base_timeout):
+    name = cmd.split()[0].upper() if cmd.split() else ""
+    if name == "SD_FLASH":
+        return max(base_timeout, 240)
+    return max(30, min(base_timeout, 60))
 
 
 def main():
@@ -126,7 +139,7 @@ def main():
             return 3
 
         for cmd in commands:
-            lines = send_cmd(ser, cmd, 30)
+            lines = send_cmd(ser, cmd, command_timeout(cmd, timeout))
             one_ok = command_ok(cmd, lines)
             ok &= one_ok
             print(f"CMD_RESULT {cmd}: {'PASS' if one_ok else 'FAIL'}")
