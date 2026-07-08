@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import os
 import sys
 import time
 
@@ -34,16 +35,38 @@ def read_line_poll(ser, deadline, poll_s=0.05):
     return read_line(ser, min(deadline, now + poll_s))
 
 
+def auto_reset_dtr(ser):
+    if os.environ.get("BOOT_SERIAL_RESET", "1") == "0":
+        print("AUTO_RESET_DTR_SKIP")
+        return
+
+    print("AUTO_RESET_DTR")
+    try:
+        ser.rts = False
+        ser.dtr = False
+        time.sleep(0.10)
+        ser.dtr = True
+        time.sleep(0.12)
+        ser.dtr = False
+        time.sleep(1.20)
+        ser.reset_input_buffer()
+    except Exception as exc:
+        print(f"AUTO_RESET_DTR_WARN {exc}")
+
+
 def connect_boot_cmd(ser, startup_timeout_s=20):
     deadline = time.time() + startup_timeout_s
     next_magic = 0.0
     seen_hello = False
+    magic_printed = False
 
     print("Connecting to KBOOT command service...")
     while time.time() < deadline:
         now = time.time()
         if not seen_hello and now >= next_magic:
-            print(">>> KSD1")
+            if not magic_printed:
+                print("KSD1_TX_LOOP")
+                magic_printed = True
             ser.write(b"KSD1\n")
             ser.flush()
             next_magic = now + 0.5
@@ -61,6 +84,7 @@ def connect_boot_cmd(ser, startup_timeout_s=20):
         if line.startswith("KBOOT:TIMEOUT"):
             seen_hello = False
             next_magic = 0.0
+            magic_printed = False
 
     print("ERROR: no KBOOT:CMD prompt")
     return False
@@ -147,10 +171,11 @@ def main():
 
     ok = True
     with serial.Serial(port, baudrate=baud, timeout=0, write_timeout=1) as ser:
-        ser.dtr = False
         ser.rts = False
-        time.sleep(1.2)
+        ser.dtr = False
+        time.sleep(0.2)
         ser.reset_input_buffer()
+        auto_reset_dtr(ser)
 
         if not connect_boot_cmd(ser, startup_timeout):
             return 1
