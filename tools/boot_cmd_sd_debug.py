@@ -27,16 +27,43 @@ def read_line(ser, deadline):
     return None
 
 
-def wait_for(ser, needles, timeout_s):
-    deadline = time.time() + timeout_s
+def read_line_poll(ser, deadline, poll_s=0.05):
+    now = time.time()
+    if now >= deadline:
+        return None
+    return read_line(ser, min(deadline, now + poll_s))
+
+
+def connect_boot_cmd(ser, startup_timeout_s=20):
+    deadline = time.time() + startup_timeout_s
+    next_magic = 0.0
+    seen_hello = False
+
+    print("Connecting to KBOOT command service...")
     while time.time() < deadline:
-        line = read_line(ser, deadline)
+        now = time.time()
+        if not seen_hello and now >= next_magic:
+            print(">>> KSD1")
+            ser.write(b"KSD1\n")
+            ser.flush()
+            next_magic = now + 0.5
+
+        line = read_line_poll(ser, deadline, 0.08)
         if line is None:
-            break
+            continue
         print(line)
-        if any(n in line for n in needles):
-            return line
-    return None
+
+        if line == "KBOOT:HELLO":
+            seen_hello = True
+            continue
+        if line == "KBOOT:CMD":
+            return True
+        if line.startswith("KBOOT:TIMEOUT"):
+            seen_hello = False
+            next_magic = 0.0
+
+    print("ERROR: no KBOOT:CMD prompt")
+    return False
 
 
 def send_cmd(ser, cmd, timeout_s=20):
@@ -107,11 +134,13 @@ def main():
     baud = int(sys.argv[2]) if len(sys.argv) > 2 else 115200
     timeout = int(sys.argv[3]) if len(sys.argv) > 3 else 45
     commands = sys.argv[4:] if len(sys.argv) > 4 else ["SD_MOUNT"]
+    startup_timeout = min(20, max(5, timeout))
 
     print("=== K210 boot SD debug ===")
     print(f"Port: {port}")
     print(f"Baud: {baud}")
-    print(f"Timeout: {timeout}s")
+    print(f"Command timeout: {timeout}s")
+    print(f"Startup timeout: {startup_timeout}s")
     print("Commands:")
     for cmd in commands:
         print(f"  {cmd}")
@@ -120,23 +149,11 @@ def main():
     with serial.Serial(port, baudrate=baud, timeout=0, write_timeout=1) as ser:
         ser.dtr = False
         ser.rts = False
-        time.sleep(0.2)
+        time.sleep(1.2)
         ser.reset_input_buffer()
 
-        print("Waiting for KBOOT/KSD READY...")
-        if wait_for(ser, ["KBOOT:READY", "KSD:READY", "KBOOT:BOOTMODE"], timeout) is None:
-            print("ERROR: boot command service did not become ready")
+        if not connect_boot_cmd(ser, startup_timeout):
             return 1
-
-        print(">>> KSD1")
-        ser.write(b"KSD1\n")
-        ser.flush()
-        if wait_for(ser, ["KBOOT:HELLO"], 5) is None:
-            print("ERROR: no KBOOT:HELLO")
-            return 2
-        if wait_for(ser, ["KBOOT:CMD"], 5) is None:
-            print("ERROR: no KBOOT:CMD prompt")
-            return 3
 
         for cmd in commands:
             lines = send_cmd(ser, cmd, command_timeout(cmd, timeout))
