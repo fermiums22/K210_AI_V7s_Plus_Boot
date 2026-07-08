@@ -23,9 +23,11 @@
 #define BOOT_CMD_READY_PERIOD_MS     1000u
 #define BOOT_SPI3_SCRATCH_OFFSET     0x00F00000u
 #define BOOT_SPI3_SCRATCH_SIZE       256u
+#define BOOT_APP_SLOT0_OFFSET        0x00100000u
 #define BOOT_SD_DEFAULT_PATH         "0:/app_slot0.bin"
 #define BOOT_SD_DEFAULT_READ_LEN     256u
-#define BOOT_SD_MAX_READ_LEN         256u
+#define BOOT_SD_MAX_READ_LEN         512u
+#define BOOT_SD_FLASH_PROGRESS_STEP  65536u
 
 #define UARTHS_RXDATA_EMPTY_MASK     (1u << 31)
 
@@ -49,6 +51,18 @@ static TickType_t ms_to_ticks_min(uint32_t ms)
 static int deadline_expired(TickType_t start, uint32_t timeout_ms)
 {
     return (xTaskGetTickCount() - start) >= ms_to_ticks_min(timeout_ms);
+}
+
+static uint32_t elapsed_ms(TickType_t start)
+{
+    return (uint32_t)((xTaskGetTickCount() - start) * portTICK_PERIOD_MS);
+}
+
+static unsigned long speed_kib_s(uint32_t bytes, uint32_t ms)
+{
+    if (!ms)
+        return 0;
+    return (unsigned long)(((bytes / 1024u) * 1000u) / ms);
 }
 
 static void host_puts(const char *s)
@@ -369,10 +383,214 @@ static bool spi3_rw_probe(uint32_t offset, char *detail, size_t detail_size)
     return true;
 }
 
+static uint32_t parse_u32_token(const char *s, uint32_t def)
+{
+    char *end = NULL;
+    unsigned long v;
+    if (!s || !s[0])
+        return def;
+    v = strtoul(s, &end, 0);
+    if (end == s)
+        return def;
+    return (uint32_t)v;
+}
+
+static void sd_flash_progress(const char *tag, uint32_t bytes, uint32_t ms)
+{
+    host_printf("KBOOT:SD_FLASH_%s bytes=%lu ms=%lu speed=%luKiB/s\n",
+                tag, (unsigned long)bytes, (unsigned long)ms,
+                speed_kib_s(bytes, ms));
+}
+
+static void sd_flash_command(const char *line)
+{
+    char raw_path[128] = BOOT_SD_DEFAULT_PATH;
+    char fs_path[160];
+    char off_s[32] = {0};
+    char max_s[32] = {0};
+    char verify_s[16] = {0};
+    uint32_t flash_off = BOOT_APP_SLOT0_OFFSET;
+    uint32_t max_len = 0;
+    uint32_t verify = 0;
+    uint32_t written = 0;
+    uint32_t next_progress = BOOT_SD_FLASH_PROGRESS_STEP;
+    TickType_t start;
+    int narg;
+
+    narg = sscanf(line, "SD_FLASH %127s %31s %31s %15s",
+                  raw_path, off_s, max_s, verify_s);
+    if (narg >= 2)
+        flash_off = parse_u32_token(off_s, BOOT_APP_SLOT0_OFFSET);
+    if (narg >= 3)
+        max_len = parse_u32_token(max_s, 0u);
+    if (narg >= 4)
+        verify = parse_u32_token(verify_s, 0u) ? 1u : 0u;
+
+    if ((flash_off & 0xfffu) != 0) {
+        host_printf("KBOOT:SD_FLASH_FAIL bad-off-align off=0x%08lx\n",
+                    (unsigned long)flash_off);
+        return;
+    }
+
+    sd_normalize_path(raw_path, fs_path, sizeof(fs_path));
+    LOGF("BOOT_CMD SD_FLASH path=%s off=0x%08lx max=%lu verify=%lu",
+         fs_path, (unsigned long)flash_off, (unsigned long)max_len,
+         (unsigned long)verify);
+
+    host_printf("KBOOT:SD_FLASH_BEGIN file=%s off=0x%08lx max=%lu verify=%lu chunk=%lu\n",
+                raw_path, (unsigned long)flash_off, (unsigned long)max_len,
+                (unsigned long)verify, (unsigned long)sizeof(s_buf));
+
+    if (!sd_mount_debug()) {
+        host_puts("KBOOT:SD_FLASH_FAIL mount\n");
+        return;
+    }
+
+    host_printf("KBOOT:SD_OPEN_BEGIN path=%s mode=read\n", fs_path);
+    handle_t f = filesystem_file_open(fs_path, FILE_ACCESS_READ, FILE_MODE_OPEN_EXISTING);
+    if (!f) {
+        host_printf("KBOOT:SD_OPEN_RESULT ok=0 path=%s\n", fs_path);
+        host_puts("KBOOT:SD_FLASH_FAIL open\n");
+        return;
+    }
+    host_printf("KBOOT:SD_OPEN_RESULT ok=1 path=%s\n", fs_path);
+    host_puts("KBOOT:SD_FLASH_READ_BEGIN\n");
+
+    start = xTaskGetTickCount();
+    for (;;) {
+        uint32_t ask = sizeof(s_buf);
+        if (max_len && written + ask > max_len)
+            ask = max_len - written;
+        if (ask == 0)
+            break;
+
+        int got = filesystem_file_read(f, s_buf, (int)ask);
+        if (got < 0) {
+            filesystem_file_close(f);
+            host_printf("KBOOT:SD_FLASH_FAIL read got=%d\n", got);
+            return;
+        }
+        if (got == 0)
+            break;
+
+        uint32_t pos = 0;
+        while (pos < (uint32_t)got) {
+            uint32_t cur_off = flash_off + written + pos;
+            uint32_t page_room;
+            uint32_t page_len;
+            int rc;
+
+            if ((cur_off & 0xfffu) == 0) {
+                host_printf("KBOOT:SD_FLASH_ERASE off=0x%08lx\n",
+                            (unsigned long)cur_off);
+                rc = boot_flash_sector_4k(cur_off);
+                if (rc != 0) {
+                    filesystem_file_close(f);
+                    host_printf("KBOOT:SD_FLASH_FAIL erase off=0x%08lx rc=%d\n",
+                                (unsigned long)cur_off, rc);
+                    return;
+                }
+            }
+
+            page_room = 256u - (cur_off & 0xffu);
+            page_len = (uint32_t)got - pos;
+            if (page_len > page_room)
+                page_len = page_room;
+
+            rc = boot_flash_program_page(cur_off, &s_buf[pos], page_len);
+            if (rc != 0) {
+                filesystem_file_close(f);
+                host_printf("KBOOT:SD_FLASH_FAIL prog off=0x%08lx len=%lu rc=%d\n",
+                            (unsigned long)cur_off, (unsigned long)page_len, rc);
+                return;
+            }
+
+            pos += page_len;
+        }
+
+        written += (uint32_t)got;
+        while (written >= next_progress) {
+            sd_flash_progress("PROGRESS", written, elapsed_ms(start));
+            next_progress += BOOT_SD_FLASH_PROGRESS_STEP;
+        }
+
+        if ((uint32_t)got < ask)
+            break;
+    }
+    filesystem_file_close(f);
+
+    if (written == 0) {
+        host_puts("KBOOT:SD_FLASH_FAIL empty\n");
+        return;
+    }
+
+    sd_flash_progress("WRITE_OK", written, elapsed_ms(start));
+
+    if (verify) {
+        uint32_t checked = 0;
+        uint32_t next_verify_progress = BOOT_SD_FLASH_PROGRESS_STEP;
+        TickType_t verify_start;
+
+        host_puts("KBOOT:SD_FLASH_VERIFY_BEGIN\n");
+        f = filesystem_file_open(fs_path, FILE_ACCESS_READ, FILE_MODE_OPEN_EXISTING);
+        if (!f) {
+            host_puts("KBOOT:SD_FLASH_FAIL verify-open\n");
+            return;
+        }
+
+        verify_start = xTaskGetTickCount();
+        while (checked < written) {
+            uint32_t ask = sizeof(s_buf);
+            if (checked + ask > written)
+                ask = written - checked;
+
+            int got = filesystem_file_read(f, s_buf, (int)ask);
+            if (got != (int)ask) {
+                filesystem_file_close(f);
+                host_printf("KBOOT:SD_FLASH_VERIFY_FAIL read checked=%lu got=%d ask=%lu\n",
+                            (unsigned long)checked, got, (unsigned long)ask);
+                return;
+            }
+
+            int rc = boot_flash_read_raw(flash_off + checked, s_verify, ask);
+            if (rc != 0) {
+                filesystem_file_close(f);
+                host_printf("KBOOT:SD_FLASH_VERIFY_FAIL flash-read off=0x%08lx rc=%d\n",
+                            (unsigned long)(flash_off + checked), rc);
+                return;
+            }
+
+            if (memcmp(s_buf, s_verify, ask) != 0) {
+                uint32_t bad = 0;
+                while (bad < ask && s_buf[bad] == s_verify[bad])
+                    bad++;
+                filesystem_file_close(f);
+                host_printf("KBOOT:SD_FLASH_VERIFY_FAIL off=0x%08lx sd=%02x flash=%02x\n",
+                            (unsigned long)(flash_off + checked + bad),
+                            s_buf[bad], s_verify[bad]);
+                return;
+            }
+
+            checked += ask;
+            while (checked >= next_verify_progress) {
+                sd_flash_progress("VERIFY_PROGRESS", checked, elapsed_ms(verify_start));
+                next_verify_progress += BOOT_SD_FLASH_PROGRESS_STEP;
+            }
+        }
+        filesystem_file_close(f);
+        sd_flash_progress("VERIFY_OK", checked, elapsed_ms(verify_start));
+    }
+
+    host_printf("KBOOT:SD_FLASH_OK file=%s off=0x%08lx bytes=%lu verify=%lu\n",
+                raw_path, (unsigned long)flash_off, (unsigned long)written,
+                (unsigned long)verify);
+}
+
 static void help_command(void)
 {
-    host_puts("KBOOT:HELP HELP SELFTEST SPI3_ID SPI3_READ <off> <len> SPI3_RW [off] SD_MOUNT SD_READ [path] [len] SD_TEST RESET DONE\n");
-    host_puts("KBOOT:HELP sd-default=0:/app_slot0.bin sd-read-max=256\n");
+    host_puts("KBOOT:HELP HELP SELFTEST SPI3_ID SPI3_READ <off> <len> SPI3_RW [off] SD_MOUNT SD_READ [path] [len] SD_TEST SD_FLASH [path] [off] [max_len] [verify] RESET DONE\n");
+    host_puts("KBOOT:HELP sd-default=0:/app_slot0.bin sd-read-max=512 sd-flash-default-off=0x00100000\n");
+    host_puts("KBOOT:HELP sd-flash-max_len=0 means until EOF, verify=0 fastest, verify=1 readback-check\n");
     host_puts("KBOOT:HELP scratch-default=0x00F00000 rw-erases-4k-sector\n");
     host_puts("KBOOT:HELP_END\n");
 }
@@ -484,6 +702,7 @@ static void command_loop(void)
         if (strcmp(line, "HELP") == 0) { help_command(); continue; }
         if (strcmp(line, "SELFTEST") == 0) { selftest_command(); continue; }
         if (strcmp(line, "SD_MOUNT") == 0) { sd_mount_command(); continue; }
+        if (strncmp(line, "SD_FLASH", 8) == 0) { sd_flash_command(line); continue; }
         if (strncmp(line, "SD_READ", 7) == 0) { sd_read_command(line); continue; }
         if (strcmp(line, "SD_TEST") == 0) { sd_test_command(); continue; }
         if (strcmp(line, "SPI3_ID") == 0) { spi3_id_command(); continue; }
