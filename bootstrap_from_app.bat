@@ -22,6 +22,13 @@ for %%D in (cmake lib third_party lds) do (
   if errorlevel 8 exit /b 3
 )
 
+for %%D in (third_party\lwip third_party\esp_serial_flasher lib\posix) do (
+  if exist "%%D" (
+    echo pruning %%D ...
+    rmdir /S /Q "%%D"
+  )
+)
+
 if not exist src mkdir src
 copy /Y "%SRC%\src\sd.c" "src\sd.c" >nul
 copy /Y "%SRC%\src\sd.h" "src\sd.h" >nul
