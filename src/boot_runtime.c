@@ -8,7 +8,7 @@
 #include "boot_cmd.h"
 #include "log.h"
 
-extern void boot_sdk_driver_install(void);
+extern int boot_sdk_driver_install(void);
 
 static uint32_t g_boot_reason;
 static StaticTask_t s_idle_task;
@@ -72,7 +72,9 @@ void boot_runtime_start(uint32_t reason)
     LOG("BOOT_MODE_ENTER");
     LOGF("BOOT_MODE_REASON 0x%08lx", (unsigned long)g_boot_reason);
 
-    boot_sdk_driver_install();
+    if (boot_sdk_driver_install() != 0)
+        boot_halt_no_scheduler("BOOT_DRIVER_INSTALL_FAIL");
+
     boot_prepare_freertos_runtime();
 
     if (xTaskCreate(boot_task, "bootcmd", 8192, NULL, tskIDLE_PRIORITY + 2, NULL) != pdPASS)

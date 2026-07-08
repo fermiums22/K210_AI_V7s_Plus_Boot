@@ -46,6 +46,9 @@ if not exist "lib\hal" (
   exit /b 2
 )
 
+py -3 tools\patch_boot_sdk.py
+if errorlevel 1 exit /b 3
+
 if not exist "%BUILD%" mkdir "%BUILD%"
 
 echo [cmake] configuring...
