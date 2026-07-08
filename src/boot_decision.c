@@ -1,6 +1,5 @@
 #include "boot_config.h"
 #include "boot_flash.h"
-#include "log.h"
 #include <stdint.h>
 #include <sysctl.h>
 
@@ -41,9 +40,7 @@ static int boot_decision_header_struct_valid(const boot_app_header_t *h)
 
 int boot_decision_app_valid(void)
 {
-    LOG("BOOT_APP_HDR_READ_BEGIN");
     boot_decision_app_header_read_rc = boot_flash_read_app_header(APP_SLOT0_FLASH_OFFSET, &boot_decision_app_header);
-    LOGF("BOOT_APP_HDR_READ_END rc=%d magic=0x%08lx", boot_decision_app_header_read_rc, (unsigned long)boot_decision_app_header.magic);
     if (boot_decision_app_header_read_rc != 0)
         return 0;
     return boot_decision_header_struct_valid(&boot_decision_app_header);

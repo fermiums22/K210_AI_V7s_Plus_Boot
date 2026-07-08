@@ -9,6 +9,7 @@
 #include "log.h"
 
 extern int boot_sdk_driver_install(void);
+extern void boot_flash_set_log_enabled(int enabled);
 
 static uint32_t g_boot_reason;
 static StaticTask_t s_idle_task;
@@ -68,6 +69,7 @@ void boot_runtime_start(uint32_t reason)
     g_boot_reason = reason;
 
     log_init();
+    boot_flash_set_log_enabled(1);
     uarths_puts("KBOOT:RUNTIME_START\n");
     LOG("BOOT_MODE_ENTER");
     LOGF("BOOT_MODE_REASON 0x%08lx", (unsigned long)g_boot_reason);

@@ -8,6 +8,16 @@
 #include <string.h>
 #include <sysctl.h>
 
+static int s_boot_flash_log_enabled;
+
+void boot_flash_set_log_enabled(int enabled)
+{
+    s_boot_flash_log_enabled = enabled ? 1 : 0;
+}
+
+#undef LOGF
+#define LOGF(...) do { if (s_boot_flash_log_enabled) log_printf(__VA_ARGS__); } while (0)
+
 #ifndef DMAC_BASE_ADDR
 #define DMAC_BASE_ADDR       0x50000000UL
 #endif
