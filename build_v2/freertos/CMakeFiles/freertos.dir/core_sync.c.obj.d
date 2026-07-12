@@ -1,0 +1,34 @@
+freertos/CMakeFiles/freertos.dir/core_sync.c.obj: \
+ D:\w_space\K210_AI_V7s_Plus_Boot\lib\freertos\core_sync.c \
+ D:\w_space\K210_AI_V7s_Plus_Boot\lib\arch\include/atomic.h \
+ D:\w_space\K210_AI_V7s_Plus_Boot\lib\hal\include/clint.h \
+ c:\k210\toolchain\kendryte-toolchain\lib\gcc\riscv64-unknown-elf\8.2.0\include\stddef.h \
+ c:\k210\toolchain\kendryte-toolchain\lib\gcc\riscv64-unknown-elf\8.2.0\include\stdint.h \
+ c:\k210\toolchain\kendryte-toolchain\riscv64-unknown-elf\include\stdint.h \
+ c:\k210\toolchain\kendryte-toolchain\riscv64-unknown-elf\include\machine\_default_types.h \
+ c:\k210\toolchain\kendryte-toolchain\riscv64-unknown-elf\include\sys\features.h \
+ c:\k210\toolchain\kendryte-toolchain\riscv64-unknown-elf\include\_newlib_version.h \
+ c:\k210\toolchain\kendryte-toolchain\riscv64-unknown-elf\include\sys\_intsup.h \
+ c:\k210\toolchain\kendryte-toolchain\riscv64-unknown-elf\include\sys\_stdint.h \
+ D:\w_space\K210_AI_V7s_Plus_Boot\lib\freertos\include/core_sync.h \
+ D:\w_space\K210_AI_V7s_Plus_Boot\lib\freertos\include/FreeRTOS.h \
+ D:\w_space\K210_AI_V7s_Plus_Boot\lib\freertos\conf/FreeRTOSConfig.h \
+ D:\w_space\K210_AI_V7s_Plus_Boot\lib\freertos\include/projdefs.h \
+ D:\w_space\K210_AI_V7s_Plus_Boot\lib\freertos\include/portable.h \
+ D:\w_space\K210_AI_V7s_Plus_Boot\lib\freertos\portable/portmacro.h \
+ D:\w_space\K210_AI_V7s_Plus_Boot\lib\arch\include/encoding.h \
+ D:\w_space\K210_AI_V7s_Plus_Boot\lib\freertos\include/mpu_wrappers.h \
+ c:\k210\toolchain\kendryte-toolchain\riscv64-unknown-elf\include\reent.h \
+ c:\k210\toolchain\kendryte-toolchain\riscv64-unknown-elf\include\sys\reent.h \
+ c:\k210\toolchain\kendryte-toolchain\riscv64-unknown-elf\include\_ansi.h \
+ c:\k210\toolchain\kendryte-toolchain\riscv64-unknown-elf\include\newlib.h \
+ c:\k210\toolchain\kendryte-toolchain\riscv64-unknown-elf\include\sys\config.h \
+ c:\k210\toolchain\kendryte-toolchain\riscv64-unknown-elf\include\machine\ieeefp.h \
+ c:\k210\toolchain\kendryte-toolchain\riscv64-unknown-elf\include\sys\_types.h \
+ c:\k210\toolchain\kendryte-toolchain\riscv64-unknown-elf\include\machine\_types.h \
+ c:\k210\toolchain\kendryte-toolchain\riscv64-unknown-elf\include\sys\lock.h \
+ D:\w_space\K210_AI_V7s_Plus_Boot\lib\hal\include/plic.h \
+ D:\w_space\K210_AI_V7s_Plus_Boot\lib\arch\include/platform.h \
+ D:\w_space\K210_AI_V7s_Plus_Boot\lib\freertos\include/FreeRTOS.h \
+ D:\w_space\K210_AI_V7s_Plus_Boot\lib\freertos\include/task.h \
+ D:\w_space\K210_AI_V7s_Plus_Boot\lib\freertos\include/list.h

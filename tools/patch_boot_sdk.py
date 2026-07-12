@@ -1,17 +1,22 @@
 #!/usr/bin/env python3
 from pathlib import Path
+import re
 
 
 def patch_spi_threshold(root: Path) -> bool:
     path = root / "lib" / "bsp" / "device" / "spi.cpp"
     text = path.read_text(encoding="utf-8")
-    old = '#define SPI_TRANSMISSION_THRESHOLD 0x80UL  /* 512B SD block with 32-bit frames => DMA */'
     new = '#define SPI_TRANSMISSION_THRESHOLD 0x10000UL  /* boot: keep SPI polling, no HAL DMA runtime */'
     if new in text:
         return False
-    if old not in text:
+    pattern = re.compile(
+        r"^#define SPI_TRANSMISSION_THRESHOLD 0x[0-9A-Fa-f]+UL(?:\s*/\*.*\*/)?$",
+        re.MULTILINE,
+    )
+    matches = pattern.findall(text)
+    if len(matches) != 1:
         raise SystemExit(f"ERROR: SPI threshold pattern not found: {path}")
-    path.write_text(text.replace(old, new), encoding="utf-8")
+    path.write_text(pattern.sub(new, text, count=1), encoding="utf-8")
     return True
 
 
