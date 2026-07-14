@@ -118,34 +118,21 @@ CMakeFiles/k210_boot_v2.dir/main.c.obj: D:/w_space/K210_AI_V7s_Plus_Boot/firmwar
   c:/k210/toolchain/kendryte-toolchain/riscv64-unknown-elf/include/_ansi.h \
   c:/k210/toolchain/kendryte-toolchain/riscv64-unknown-elf/include/_newlib_version.h \
   c:/k210/toolchain/kendryte-toolchain/riscv64-unknown-elf/include/machine/_default_types.h \
-  c:/k210/toolchain/kendryte-toolchain/riscv64-unknown-elf/include/machine/_endian.h \
   c:/k210/toolchain/kendryte-toolchain/riscv64-unknown-elf/include/machine/_types.h \
-  c:/k210/toolchain/kendryte-toolchain/riscv64-unknown-elf/include/machine/endian.h \
   c:/k210/toolchain/kendryte-toolchain/riscv64-unknown-elf/include/machine/ieeefp.h \
-  c:/k210/toolchain/kendryte-toolchain/riscv64-unknown-elf/include/machine/types.h \
   c:/k210/toolchain/kendryte-toolchain/riscv64-unknown-elf/include/newlib.h \
   c:/k210/toolchain/kendryte-toolchain/riscv64-unknown-elf/include/stdint.h \
-  c:/k210/toolchain/kendryte-toolchain/riscv64-unknown-elf/include/stdio.h \
   c:/k210/toolchain/kendryte-toolchain/riscv64-unknown-elf/include/string.h \
   c:/k210/toolchain/kendryte-toolchain/riscv64-unknown-elf/include/strings.h \
   c:/k210/toolchain/kendryte-toolchain/riscv64-unknown-elf/include/sys/_intsup.h \
-  c:/k210/toolchain/kendryte-toolchain/riscv64-unknown-elf/include/sys/_pthreadtypes.h \
-  c:/k210/toolchain/kendryte-toolchain/riscv64-unknown-elf/include/sys/_sigset.h \
   c:/k210/toolchain/kendryte-toolchain/riscv64-unknown-elf/include/sys/_stdint.h \
-  c:/k210/toolchain/kendryte-toolchain/riscv64-unknown-elf/include/sys/_timespec.h \
-  c:/k210/toolchain/kendryte-toolchain/riscv64-unknown-elf/include/sys/_timeval.h \
   c:/k210/toolchain/kendryte-toolchain/riscv64-unknown-elf/include/sys/_types.h \
   c:/k210/toolchain/kendryte-toolchain/riscv64-unknown-elf/include/sys/cdefs.h \
   c:/k210/toolchain/kendryte-toolchain/riscv64-unknown-elf/include/sys/config.h \
   c:/k210/toolchain/kendryte-toolchain/riscv64-unknown-elf/include/sys/features.h \
   c:/k210/toolchain/kendryte-toolchain/riscv64-unknown-elf/include/sys/lock.h \
   c:/k210/toolchain/kendryte-toolchain/riscv64-unknown-elf/include/sys/reent.h \
-  c:/k210/toolchain/kendryte-toolchain/riscv64-unknown-elf/include/sys/sched.h \
-  c:/k210/toolchain/kendryte-toolchain/riscv64-unknown-elf/include/sys/select.h \
-  c:/k210/toolchain/kendryte-toolchain/riscv64-unknown-elf/include/sys/stdio.h \
   c:/k210/toolchain/kendryte-toolchain/riscv64-unknown-elf/include/sys/string.h \
-  c:/k210/toolchain/kendryte-toolchain/riscv64-unknown-elf/include/sys/timespec.h \
-  c:/k210/toolchain/kendryte-toolchain/riscv64-unknown-elf/include/sys/types.h \
   c:/k210/toolchain/kendryte-toolchain/riscv64-unknown-elf/include/xlocale.h
 
 CMakeFiles/k210_boot_v2.dir/newlib_locks.c.obj: D:/w_space/K210_AI_V7s_Plus_Boot/firmware_v2/newlib_locks.c \
@@ -158,29 +145,7 @@ CMakeFiles/k210_boot_v2.dir/newlib_locks.c.obj: D:/w_space/K210_AI_V7s_Plus_Boot
   c:/k210/toolchain/kendryte-toolchain/riscv64-unknown-elf/include/sys/lock.h
 
 
-c:/k210/toolchain/kendryte-toolchain/riscv64-unknown-elf/include/sys/types.h:
-
-c:/k210/toolchain/kendryte-toolchain/riscv64-unknown-elf/include/sys/timespec.h:
-
-c:/k210/toolchain/kendryte-toolchain/riscv64-unknown-elf/include/sys/select.h:
-
-c:/k210/toolchain/kendryte-toolchain/riscv64-unknown-elf/include/sys/sched.h:
-
-c:/k210/toolchain/kendryte-toolchain/riscv64-unknown-elf/include/sys/_timespec.h:
-
-c:/k210/toolchain/kendryte-toolchain/riscv64-unknown-elf/include/sys/_sigset.h:
-
-c:/k210/toolchain/kendryte-toolchain/riscv64-unknown-elf/include/sys/_pthreadtypes.h:
-
-c:/k210/toolchain/kendryte-toolchain/riscv64-unknown-elf/include/machine/endian.h:
-
-c:/k210/toolchain/kendryte-toolchain/riscv64-unknown-elf/include/machine/_endian.h:
-
-c:/k210/toolchain/kendryte-toolchain/riscv64-unknown-elf/include/stdio.h:
-
 D:/w_space/K210_AI_V7s_Plus_Boot/lib/hal/include/uarths.h:
-
-c:/k210/toolchain/kendryte-toolchain/riscv64-unknown-elf/include/machine/types.h:
 
 D:/w_space/K210_AI_V7s_Plus/firmware_v2/common/sha256_stream.h:
 
@@ -216,8 +181,6 @@ c:/k210/toolchain/kendryte-toolchain/lib/gcc/riscv64-unknown-elf/8.2.0/include/s
 
 D:/w_space/K210_AI_V7s_Plus_Boot/lib/hal/include/dmac.h:
 
-c:/k210/toolchain/kendryte-toolchain/riscv64-unknown-elf/include/sys/_timeval.h:
-
 D:/w_space/K210_AI_V7s_Plus/protocol/kupdate_v2.c:
 
 D:/w_space/K210_AI_V7s_Plus_Boot/lib/arch/include/platform.h:
@@ -225,8 +188,6 @@ D:/w_space/K210_AI_V7s_Plus_Boot/lib/arch/include/platform.h:
 c:/k210/toolchain/kendryte-toolchain/riscv64-unknown-elf/include/stdint.h:
 
 c:/k210/toolchain/kendryte-toolchain/riscv64-unknown-elf/include/sys/cdefs.h:
-
-c:/k210/toolchain/kendryte-toolchain/riscv64-unknown-elf/include/sys/stdio.h:
 
 D:/w_space/K210_AI_V7s_Plus/firmware_v2/common/k210_flash.c:
 
