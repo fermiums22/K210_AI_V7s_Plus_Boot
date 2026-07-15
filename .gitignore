@@ -1,4 +1,5 @@
 build/
+build_v2/
 cmake/
 lds/
 lib/

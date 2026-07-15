@@ -1,8 +1,0 @@
-{
-	"InstallScripts" : 
-	[
-		"D:/w_space/K210_AI_V7s_Plus_Boot/build_v2/cmake_install.cmake",
-		"D:/w_space/K210_AI_V7s_Plus_Boot/build_v2/hal/cmake_install.cmake"
-	],
-	"Parallel" : false
-}

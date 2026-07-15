@@ -5,15 +5,15 @@ get_filename_component(ROOT "${CMAKE_CURRENT_LIST_DIR}/.." ABSOLUTE)
 get_filename_component(DEFAULT_APP_ROOT "${ROOT}/../K210_AI_V7s_Plus" ABSOLUTE)
 set(APP_V2_ROOT "${DEFAULT_APP_ROOT}" CACHE PATH "K210 v2 app repository")
 set(TOOLCHAIN "C:/K210/toolchain/kendryte-toolchain/bin" CACHE PATH "RISC-V toolchain bin")
-set(SDK_ROOT "${ROOT}")
-include("${ROOT}/cmake/common.cmake")
+set(SDK_ROOT "${APP_V2_ROOT}")
+include("${APP_V2_ROOT}/cmake/common.cmake")
 project(k210_boot_v2 C CXX ASM)
 
 include_directories(
-  "${ROOT}/lib/arch/include" "${ROOT}/lib/utils/include" "${ROOT}/lib"
-  "${ROOT}/third_party"
+  "${APP_V2_ROOT}/lib/arch/include" "${APP_V2_ROOT}/lib/utils/include"
+  "${APP_V2_ROOT}/lib" "${APP_V2_ROOT}/third_party"
   "${APP_V2_ROOT}/protocol" "${APP_V2_ROOT}/firmware_v2/common")
-add_subdirectory("${ROOT}/lib/hal" "${CMAKE_BINARY_DIR}/hal")
+add_subdirectory("${APP_V2_ROOT}/lib/hal" "${CMAKE_BINARY_DIR}/hal")
 
 add_executable(k210_boot_v2
   startup.S main.c jump.S newlib_locks.c
@@ -23,7 +23,8 @@ add_executable(k210_boot_v2
   "${APP_V2_ROOT}/firmware_v2/common/kboot_meta_v2.c")
 set_source_files_properties(startup.S PROPERTIES COMPILE_FLAGS "-x assembler-with-cpp -D__riscv64")
 target_include_directories(k210_boot_v2 PRIVATE
-  "${ROOT}/lib/arch/include" "${ROOT}/lib/hal/include" "${ROOT}/lib/utils/include")
+  "${APP_V2_ROOT}/lib/arch/include" "${APP_V2_ROOT}/lib/hal/include"
+  "${APP_V2_ROOT}/lib/utils/include")
 target_link_libraries(k210_boot_v2
   -Wl,--start-group m atomic c hal -Wl,--end-group)
 add_custom_command(TARGET k210_boot_v2 POST_BUILD

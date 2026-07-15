@@ -1,6 +1,0 @@
-D:/w_space/K210_AI_V7s_Plus_Boot/build_v2/CMakeFiles/k210_boot_v2.dir
-D:/w_space/K210_AI_V7s_Plus_Boot/build_v2/CMakeFiles/edit_cache.dir
-D:/w_space/K210_AI_V7s_Plus_Boot/build_v2/CMakeFiles/rebuild_cache.dir
-D:/w_space/K210_AI_V7s_Plus_Boot/build_v2/hal/CMakeFiles/hal.dir
-D:/w_space/K210_AI_V7s_Plus_Boot/build_v2/hal/CMakeFiles/edit_cache.dir
-D:/w_space/K210_AI_V7s_Plus_Boot/build_v2/hal/CMakeFiles/rebuild_cache.dir
