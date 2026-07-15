@@ -2,76 +2,20 @@
 setlocal EnableExtensions
 cd /d "%~dp0"
 
-set "SDK=%K210_SDK%"
-if "%SDK%"=="" if exist "C:\K210\sdk\kendryte-freertos-sdk-0.7.0" set "SDK=C:\K210\sdk\kendryte-freertos-sdk-0.7.0"
-if "%SDK%"=="" set "SDK=%CD%"
-
 set "TC=%K210_TC%"
-if "%TC%"=="" if exist "C:\K210\toolchain\kendryte-toolchain\bin\riscv64-unknown-elf-gcc.exe" set "TC=C:\K210\toolchain\kendryte-toolchain\bin"
 if "%TC%"=="" set "TC=C:\K210\toolchain\kendryte-toolchain\bin"
-
-set "BOOT_SLOT_PROBE=%BOOT_SLOT_PROBE%"
-if "%BOOT_SLOT_PROBE%"=="" set "BOOT_SLOT_PROBE=1"
-set "BOOT_BUILD_COLOR=%BOOT_BUILD_COLOR%"
-if "%BOOT_BUILD_COLOR%"=="" set "BOOT_BUILD_COLOR=1"
-
 set "BUILD=%CD%\build"
-set "MAKE=%TC%\mingw32-make.exe"
-if not exist "%MAKE%" set "MAKE=C:\msys64\mingw64\bin\mingw32-make.exe"
+set "NINJA=C:\msys64\mingw64\bin\ninja.exe"
 
-echo === K210 boot build ===
-echo Repo:  %CD%
-echo TC:    %TC%
-echo MAKE:  %MAKE%
-echo BUILD: %BUILD%
-echo Slot probe: %BOOT_SLOT_PROBE%
-echo Build color: %BOOT_BUILD_COLOR%
-echo.
-
-if not exist "%TC%" (
-  echo ERROR: K210 toolchain not found: %TC%
-  exit /b 1
-)
-if not exist "%MAKE%" (
-  echo ERROR: mingw32-make.exe not found
-  exit /b 1
-)
-where cmake >nul 2>nul
-if errorlevel 1 (
-  echo ERROR: cmake not found in PATH
-  exit /b 1
-)
-if not exist "lib\hal" (
-  echo ERROR: SDK/lib folders missing. Run bootstrap_from_app.bat first.
+if not exist "%NINJA%" (
+  echo ERROR: ninja not found: %NINJA%
   exit /b 2
 )
 
-py -3 tools\patch_boot_sdk.py
-if errorlevel 1 exit /b 3
-
-if not exist "%BUILD%" mkdir "%BUILD%"
-
-echo [cmake] configuring...
-if "%BOOT_BUILD_COLOR%"=="1" (
-  py -3 tools\run_color_build.py -- cmake -S . -B "%BUILD%" -G "MinGW Makefiles" -DCMAKE_MAKE_PROGRAM="%MAKE%" -DTOOLCHAIN="%TC%" -DSDK_ROOT="%SDK%" -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DBOOT_ENABLE_SLOT_PROBE=%BOOT_SLOT_PROBE%
-) else (
-  cmake -S . -B "%BUILD%" -G "MinGW Makefiles" -DCMAKE_MAKE_PROGRAM="%MAKE%" -DTOOLCHAIN="%TC%" -DSDK_ROOT="%SDK%" -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DBOOT_ENABLE_SLOT_PROBE=%BOOT_SLOT_PROBE%
-)
+cmake -S firmware_v2 -B "%BUILD%" -G Ninja -DCMAKE_MAKE_PROGRAM="%NINJA%" -DTOOLCHAIN="%TC%"
+if errorlevel 1 exit /b 1
+cmake --build "%BUILD%" --parallel
 if errorlevel 1 exit /b 1
 
-echo [make] building...
-if "%BOOT_BUILD_COLOR%"=="1" (
-  py -3 tools\run_color_build.py -- "%MAKE%" -C "%BUILD%" -j4
-) else (
-  "%MAKE%" -C "%BUILD%" -j4
-)
-if errorlevel 1 exit /b 1
-
-if not exist "%BUILD%\k210_boot.bin" (
-  echo ERROR: binary missing: %BUILD%\k210_boot.bin
-  exit /b 1
-)
-
-echo.
-echo OK: %BUILD%\k210_boot.bin
-exit /b 0
+if not exist "%BUILD%\k210_boot_v2.bin" exit /b 1
+echo K210_BOOT_BUILD_OK %BUILD%\k210_boot_v2.bin
